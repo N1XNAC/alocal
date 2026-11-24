@@ -9,7 +9,7 @@ It detects the hardware, turns it into a transparent **Hardware Score (0–100)*
 It is a planning tool, not a benchmark. Tokens/sec values are memory-bandwidth **estimates** with an explicit ±35% range. The chat is a conversational TUI (it does not edit files or run tools).
 
 ```
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | ALOCAL_REPO=OWNER/REPO sh
+curl -fsSL https://raw.githubusercontent.com/N1XNAC/alocal/main/install.sh | ALOCAL_REPO=N1XNAC/alocal sh
 alocal                  # opens the chat UI
 alocal scan
 alocal recommend
@@ -25,10 +25,10 @@ Prerequisites: **Go 1.22+** to build from source. Nothing else is required: Aloc
 
 ### One-line install
 
-Replace `OWNER/REPO` with your GitHub repository. The installer verifies the published SHA-256 checksum before installing to `~/.local/bin`.
+The installer verifies the published SHA-256 checksum before installing to `~/.local/bin`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | ALOCAL_REPO=OWNER/REPO sh
+curl -fsSL https://raw.githubusercontent.com/N1XNAC/alocal/main/install.sh | ALOCAL_REPO=N1XNAC/alocal sh
 export PATH="$HOME/.local/bin:$PATH"          # add to ~/.bashrc or ~/.zshrc to persist
 alocal --version
 alocal                                      # opens chat
@@ -37,8 +37,8 @@ alocal                                      # opens chat
 Windows (PowerShell):
 
 ```powershell
-$env:ALOCAL_REPO = "OWNER/REPO"
-irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+$env:ALOCAL_REPO = "N1XNAC/alocal"
+irm https://raw.githubusercontent.com/N1XNAC/alocal/main/install.ps1 | iex
 # Add %USERPROFILE%\.local\bin to PATH, then run: alocal
 ```
 

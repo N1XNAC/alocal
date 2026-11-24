@@ -1,6 +1,6 @@
 #!/bin/sh
 # Alocal installer. Usage:
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | ALOCAL_REPO=OWNER/REPO sh
+#   curl -fsSL https://raw.githubusercontent.com/N1XNAC/alocal/main/install.sh | ALOCAL_REPO=N1XNAC/alocal sh
 #   ./install.sh                       # from a source checkout (builds from source)
 set -eu
 
@@ -58,7 +58,7 @@ else
   if [ -n "$BASE_URL" ]; then
     base="$BASE_URL"
   else
-    [ -n "$REPO" ] || die "set ALOCAL_REPO=OWNER/REPO (your GitHub repository)"
+    [ -n "$REPO" ] || die "set ALOCAL_REPO=N1XNAC/alocal (your GitHub repository)"
     if [ "$VERSION" = latest ]; then
       base="https://github.com/$REPO/releases/latest/download"
     else

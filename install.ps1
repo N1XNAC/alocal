@@ -1,11 +1,11 @@
 # Alocal installer for Windows.
-#   $env:ALOCAL_REPO = "OWNER/REPO"
-#   irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+#   $env:ALOCAL_REPO = "N1XNAC/alocal"
+#   irm https://raw.githubusercontent.com/N1XNAC/alocal/main/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 
 $repo = $env:ALOCAL_REPO
 $baseOverride = $env:ALOCAL_BASE_URL
-if (-not $repo -and -not $baseOverride) { throw 'Set ALOCAL_REPO to OWNER/REPO (your GitHub repository).' }
+if (-not $repo -and -not $baseOverride) { throw 'Set ALOCAL_REPO to N1XNAC/alocal (your GitHub repository).' }
 
 $version = if ($env:ALOCAL_VERSION) { $env:ALOCAL_VERSION } else { 'latest' }
 $installDir = if ($env:ALOCAL_INSTALL_DIR) { $env:ALOCAL_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.local\bin' }
