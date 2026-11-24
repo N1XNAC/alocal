@@ -162,6 +162,32 @@ func TestPullDryRun(t *testing.T) {
 	}
 }
 
+func TestDownloadCommandMatchesPull(t *testing.T) {
+	isolateLocalState(t)
+	args := []string{"qwen2.5-7b-instruct-q4_k_m", "--file", "Qwen2.5-7B-Instruct-Q4_K_M.gguf", "--dry-run"}
+	pullOut, _, err := run(t, "", append([]string{"pull"}, args...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloadOut, _, err := run(t, "", append([]string{"download"}, args...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(pullOut, "alocal pull bartowski/") {
+		t.Fatalf("pull output = %q", pullOut)
+	}
+	if !strings.Contains(downloadOut, "alocal download bartowski/") {
+		t.Fatalf("download output = %q", downloadOut)
+	}
+	getOut, _, err := run(t, "", append([]string{"get"}, args...)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(getOut, "alocal get bartowski/") {
+		t.Fatalf("get output = %q", getOut)
+	}
+}
+
 func TestModelsLocalEmpty(t *testing.T) {
 	isolateLocalState(t)
 	out, _, err := run(t, "", "models", "--local")

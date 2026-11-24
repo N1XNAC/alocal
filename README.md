@@ -57,7 +57,7 @@ alocal recommend                  # best model for this machine
 alocal recommend --task coding    # prefer coding models
 alocal explain qwen2.5-7b-instruct-q4_k_m
 alocal models --quant Q4_K_M --min-context 32768
-alocal pull qwen2.5-7b-instruct-q4_k_m   # downloads a GGUF from Hugging Face
+alocal download qwen2.5-7b-instruct-q4_k_m   # downloads a GGUF from Hugging Face
 alocal                            # opens chat with the best fitted/downloaded model
 ```
 
@@ -139,7 +139,7 @@ A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`
 | `alocal recommend` | Hard memory filter + nearest-model-score rule. Shows alternatives and reasons. |
 | `alocal models` | Browse/filter the catalog (`--task`, `--family`, `--quant`, `--runtime`, `--min-context`, `--max-size`); `--local` lists downloaded GGUFs. |
 | `alocal explain <id>` | Per-model fit: KV cache, overhead, required memory, score comparison, tok/s estimate. |
-| `alocal pull <id\|owner/repo>` | Download a GGUF from Hugging Face into `~/.local/share/alocal/models` with quant/file selection and GGUF verification. |
+| `alocal download <id\|owner/repo>` | Download a GGUF from Hugging Face into `~/.local/share/alocal/models` with quant/file selection and GGUF verification. `alocal pull` and `alocal get` are aliases. |
 | `alocal chat [model]` | Interactive streaming chat TUI with a local llama.cpp runtime. `--auto` selects the best model for this hardware. |
 | `alocal catalog validate` | Recompute every model score from the schema and report mismatches. `--file` validates an external file. |
 

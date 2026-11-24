@@ -13,6 +13,16 @@ import (
 	"alocal/internal/local"
 )
 
+// newDownloadCmd is the discoverable spelling of pull.
+func newDownloadCmd(app *App) *cobra.Command {
+	cmd := newPullCmd(app)
+	cmd.Use = "download [model-id|owner/repo]"
+	cmd.Short = "Download a GGUF from Hugging Face (alias of pull)"
+	cmd.Aliases = []string{"get"}
+	cmd.Long = strings.ReplaceAll(cmd.Long, "alocal pull", "alocal download")
+	return cmd
+}
+
 func newPullCmd(app *App) *cobra.Command {
 	var (
 		yes     bool
@@ -87,7 +97,11 @@ Examples:
 			}
 
 			dest := filepath.Join(local.ModelsDir(), strings.ReplaceAll(repo, "/", "_"), filepath.Base(file))
-			command := fmt.Sprintf("alocal pull %s --quant %s --file %s", repo, orDash(wantQuant), file)
+			verb := cmd.Name()
+			if called := cmd.CalledAs(); called != "" {
+				verb = called
+			}
+			command := fmt.Sprintf("alocal %s %s --quant %s --file %s", verb, repo, orDash(wantQuant), file)
 			if dryRun {
 				if app.JSON {
 					return app.writeJSON(map[string]any{"runtime": "llamacpp", "repo": repo, "file": file, "path": dest, "command": command, "ran": false})

@@ -107,6 +107,7 @@ func NewRoot(app *App) *cobra.Command {
 		newModelsCmd(app),
 		newExplainCmd(app),
 		newPullCmd(app),
+		newDownloadCmd(app),
 		newCatalogCmd(app),
 		newChatCmd(app),
 	)
