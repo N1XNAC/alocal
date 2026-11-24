@@ -51,6 +51,32 @@ func TestChatModelNotInstalled(t *testing.T) {
 	}
 }
 
+func TestChatAutoFallsBackToInstalledModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			_ = json.NewEncoder(w).Encode(ollama.TagsResponse{Models: []ollama.ModelInfo{
+				{Name: "qwen3:0.6b"},
+			}})
+		default:
+			_, _ = w.Write([]byte("Ollama is running"))
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	_, errOut, err := run(t, "", "chat", "--auto", "--mock-hardware", fixturePath("rtx3060"))
+	if err == nil {
+		t.Fatal("expected non-TTY chat error in tests")
+	}
+	if !strings.Contains(errOut, "not pulled; using qwen3:0.6b instead") {
+		t.Fatalf("missing auto fallback note: %s", errOut)
+	}
+	if !strings.Contains(errOut, "alocal pull") {
+		t.Fatalf("missing pull hint: %s", errOut)
+	}
+}
+
 func TestHasOllamaModel(t *testing.T) {
 	models := []ollama.ModelInfo{
 		{Name: "qwen3:0.6b"},

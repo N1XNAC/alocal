@@ -83,6 +83,11 @@ func NewRoot(app *App) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Like other modern terminal tools, bare `alocal` opens the chat UI.
+			// In a non-interactive shell, print help instead so scripts stay usable.
+			if len(args) == 0 && term.IsTerminal(int(os.Stdout.Fd())) {
+				return runChatDefault(app, cmd)
+			}
 			return cmd.Help()
 		},
 	}
@@ -106,6 +111,19 @@ func NewRoot(app *App) *cobra.Command {
 		newChatCmd(app),
 	)
 	return root
+}
+
+// runChatDefault delegates bare `alocal` to the chat command with auto-selection.
+func runChatDefault(app *App, root *cobra.Command) error {
+	cmd := newChatCmd(app)
+	cmd.SetContext(root.Context())
+	if err := cmd.Flags().Set("auto", "true"); err != nil {
+		return err
+	}
+	if cmd.RunE == nil {
+		return errors.New("chat command has no handler")
+	}
+	return cmd.RunE(cmd, nil)
 }
 
 func (a *App) printError(err error, code int) {

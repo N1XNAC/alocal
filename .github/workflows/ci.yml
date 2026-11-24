@@ -26,6 +26,8 @@ jobs:
             echo "$unformatted"
             exit 1
           fi
+      - name: installer syntax
+        run: sh -n install.sh
       - name: vet
         run: go vet ./...
       - name: test

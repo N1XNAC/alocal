@@ -81,11 +81,19 @@ Examples:
 			listCtx, listCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 			defer listCancel()
 			if installed, listErr := client.ListModels(listCtx); listErr == nil && !hasOllamaModel(installed, selectedModel) {
-				pull := "ollama pull " + selectedModel
-				if selectedID != "" {
-					pull = "alocal pull " + selectedID + "  # or: " + pull
+				if selectedID != "" && len(installed) > 0 {
+					// Bare `alocal` / `--auto` should work immediately: use a pulled model
+					// and tell the user how to get the actual recommendation.
+					fmt.Fprintf(app.Err, "Recommended %s is not pulled; using %s instead.\nTo use the recommendation: alocal pull %s\n",
+						selectedModel, installed[0].Name, selectedID)
+					selectedModel = installed[0].Name
+				} else {
+					pull := "ollama pull " + selectedModel
+					if selectedID != "" {
+						pull = "alocal pull " + selectedID + "  # or: " + pull
+					}
+					return coded(1, "Model %q is not installed in Ollama yet.\nPull it first:\n  %s\nThen rerun: alocal chat %s", selectedModel, pull, selectedModel)
 				}
-				return coded(1, "Model %q is not installed in Ollama yet.\nPull it first:\n  %s\nThen rerun: alocal chat %s", selectedModel, pull, selectedModel)
 			}
 
 			cfg := chat.Config{

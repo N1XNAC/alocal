@@ -9,69 +9,69 @@ It detects the hardware, turns it into a transparent **Hardware Score (0–100)*
 It is a planning tool, not a benchmark. Tokens/sec values are memory-bandwidth **estimates** with an explicit ±35% range. The chat is a conversational TUI (it does not edit files or run tools).
 
 ```
-go build -o alocal ./cmd/alocal
-./alocal scan
-./alocal recommend
-./alocal chat --auto
+curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | ALOCAL_REPO=OWNER/REPO sh
+alocal                  # opens the chat UI
+alocal scan
+alocal recommend
 ```
 
-The root command prints help; start with `alocal scan`, then `alocal recommend` or `alocal chat`.
+Bare `alocal` opens the chat UI in an interactive terminal; `alocal --help` lists every command.
 
 ---
 
 ## Quick start
 
-Prerequisites: **Go 1.22+** to build from source. **Ollama** (<https://ollama.com>) is only needed for `chat` and `pull`.
+Prerequisites: **Go 1.22+** to build from source. **Ollama** (<https://ollama.com>) is only needed for chat and `pull`.
+
+### One-line install
+
+Replace `OWNER/REPO` with your GitHub repository. The installer verifies the published SHA-256 checksum before installing to `~/.local/bin`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | ALOCAL_REPO=OWNER/REPO sh
+export PATH="$HOME/.local/bin:$PATH"          # add to ~/.bashrc or ~/.zshrc to persist
+alocal --version
+alocal                                      # opens chat
+```
+
+Windows (PowerShell):
+
+```powershell
+$env:ALOCAL_REPO = "OWNER/REPO"
+irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+# Add %USERPROFILE%\.local\bin to PATH, then run: alocal
+```
+
+Options: `ALOCAL_VERSION=v0.2.0` pins a release, `ALOCAL_INSTALL_DIR=/path/to/bin` changes the destination, and `ALOCAL_BASE_URL=https://mirror/...` points at a mirror. To publish releases yourself, push a `v*` tag: `.github/workflows/release.yml` builds all six static binaries plus `checksums.txt`.
+
+### From a cloned checkout
 
 ```bash
 git clone <your-fork> alocal && cd alocal
-make build                        # or: go build -o alocal ./cmd/alocal
+./install.sh                      # builds from source with Go 1.22+
+export PATH="$HOME/.local/bin:$PATH"
+# or: make build && make install
 
-./alocal scan                     # hardware report + Hardware Score
-./alocal recommend                # best model for this machine
-./alocal recommend --task coding  # prefer coding models
-./alocal explain qwen2.5-7b-instruct-q4_k_m
-./alocal models --quant Q4_K_M --min-context 32768
-./alocal pull qwen2.5-7b-instruct-q4_k_m
+alocal scan                       # hardware report + Hardware Score
+alocal recommend                  # best model for this machine
+alocal recommend --task coding    # prefer coding models
+alocal explain qwen2.5-7b-instruct-q4_k_m
+alocal models --quant Q4_K_M --min-context 32768
+alocal pull qwen2.5-7b-instruct-q4_k_m
 ollama serve                      # in a second terminal, if Ollama is not running
-./alocal chat --auto              # interactive chat (pull the model first)
+alocal                            # opens chat with the best fitted/pulled model
 ```
+
+On Windows, build with `go build -o alocal.exe .\cmd\alocal` and put the `.exe` on PATH. `make cross` builds six static binaries (Linux/macOS/Windows × amd64/arm64) into `dist/`.
 
 No Go is needed to run a prebuilt release binary. Detection degrades gracefully: if `nvidia-smi`, `rocm-smi`, or WMI is unavailable, `Alocal` records a warning and keeps going instead of failing.
 
-### Install it on your computer
-
-**Linux / macOS**
-
-```bash
-cd /path/to/alocal
-make build
-make install                      # installs to ~/.local/bin/alocal
-export PATH="$HOME/.local/bin:$PATH"
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc   # persist (use ~/.zshrc on zsh)
-
-alocal --version
-alocal scan
-```
-
-**Windows (PowerShell)**
-
-```powershell
-cd C:\path\to\alocal
-go build -o alocal.exe .\cmd\alocal
-mkdir -p "$env:LOCALAPPDATA\Alocal"
-copy alocal.exe "$env:LOCALAPPDATA\Alocal\alocal.exe"
-# Add C:\Users\<you>\AppData\Local\Alocal to your PATH, then:
-alocal scan
-```
-
-To build six static binaries (Linux/macOS/Windows × amd64/arm64), run `make cross`; they land in `dist/`.
-
 ### Interactive chat
 
-`alocal chat` is a full-screen terminal UI backed by Ollama's streaming API.
+`alocal` (or `alocal chat`) is a full-screen terminal UI backed by Ollama's streaming API. Bare `alocal` is equivalent to `alocal chat --auto`; in a non-interactive shell it prints help instead.
 
 ```bash
+alocal                                                  # opens chat with auto-selected model
 alocal chat qwen3:0.6b                                  # use an installed model
 alocal chat --auto                                      # recommend the best fit for this machine
 alocal chat --auto --mock-hardware tests/fixtures/rtx4090.json
@@ -80,7 +80,7 @@ alocal chat --ollama-url http://remote-host:11434 qwen3:0.6b
 ```
 
 - If you omit the model and `--auto`, the first installed Ollama model is used.
-- `--auto` picks the best catalog model for your hardware, then **checks that it is pulled**. If not, it prints the exact `alocal pull <id>` / `ollama pull <tag>` command to run first.
+- `--auto` picks the best catalog model for your hardware, then **checks that it is pulled**. If it is not, Alocal uses an already-pulled model so the UI still opens, and prints the exact `alocal pull <id>` / `ollama pull <tag>` command needed to get the recommendation. If nothing is pulled yet, it stops with the pull instructions.
 - Keys: `Enter` send, `Shift+Enter` newline, `Esc` stop generation, `Ctrl+C` / `Ctrl+D` quit.
 - Slash commands: `/help`, `/clear`, `/model <name>`, `/system <prompt>`, `/info`, `/models`, `/quit`.
 - Requires an interactive terminal; piping stdin/stdout is rejected with a clear error.
@@ -103,6 +103,7 @@ A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`
 
 | Command | Purpose |
 |---|---|
+| `alocal` | Open the interactive chat UI with auto model selection (TTY only; prints help otherwise). |
 | `alocal scan` | Detect CPU, RAM, GPU(s), disk, OS/container/WSL. Shows the Hardware Score breakdown. |
 | `alocal score` | Print only the score (tab-separated in plain mode). `--verbose` shows components. |
 | `alocal recommend` | Hard memory filter + nearest-model-score rule. Shows alternatives and reasons. |
@@ -460,8 +461,10 @@ internal/ollama/     streaming Ollama HTTP client
 data/                gpus.json, models.json, //go:embed
 tests/fixtures/      five reproducible machine profiles
 scripts/             catalog generator
+install.sh/ps1       one-line installers (download + SHA-256 verification)
+.github/workflows/   CI test/build matrix and tag-triggered release workflow
 ```
 
 Mock profiles follow the same schema as `alocal scan --json`; a profile needs a CPU model plus RAM or GPU data to normalize. Tests cover the five fixtures, score formulas, catalog integrity, CLI exit codes, and JSON contracts.
 
-CI (`.github/workflows/ci.yml`) runs formatting, vet, tests, and a build matrix for Linux/macOS/Windows on amd64 and arm64.
+CI (`.github/workflows/ci.yml`) runs formatting, installer syntax checks, vet, tests, and a build matrix for Linux/macOS/Windows on amd64 and arm64. Pushing a `v*` tag triggers `.github/workflows/release.yml`, which publishes the same six binaries and a `checksums.txt` used by `install.sh` / `install.ps1`.
