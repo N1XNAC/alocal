@@ -150,12 +150,26 @@ func TestCatalogValidateCommand(t *testing.T) {
 }
 
 func TestPullDryRun(t *testing.T) {
-	out, _, err := run(t, "", "pull", "qwen2.5-7b-instruct-q4_k_m", "--dry-run")
+	isolateLocalState(t)
+	out, _, err := run(t, "", "pull", "qwen2.5-7b-instruct-q4_k_m",
+		"--file", "Qwen2.5-7B-Instruct-Q4_K_M.gguf", "--dry-run")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(out) != "ollama pull qwen2.5:7b-instruct-q4_K_M" {
-		t.Errorf("pull dry-run = %q", out)
+	want := "alocal pull bartowski/Qwen2.5-7B-Instruct-GGUF --quant Q4_K_M --file Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+	if strings.TrimSpace(out) != want {
+		t.Errorf("pull dry-run = %q, want %q", out, want)
+	}
+}
+
+func TestModelsLocalEmpty(t *testing.T) {
+	isolateLocalState(t)
+	out, _, err := run(t, "", "models", "--local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "No GGUFs downloaded") {
+		t.Errorf("unexpected local model output: %s", out)
 	}
 }
 

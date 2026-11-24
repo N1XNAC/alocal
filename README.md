@@ -4,7 +4,7 @@
 
 > **What is the largest local LLM this machine can actually run well?**
 
-It detects the hardware, turns it into a transparent **Hardware Score (0–100)**, scores an embedded catalog of 97 local models, applies a **hard memory-fit filter**, and recommends the highest-scoring model that does not exceed the machine's capability. It can then open an **interactive terminal chat** with a local Ollama model, streaming responses with Markdown rendering and slash commands. Every number is computed by a documented formula, and every score can be inspected with `--verbose` or `--json`.
+It detects the hardware, turns it into a transparent **Hardware Score (0–100)**, scores an embedded catalog of 97 local models, applies a **hard memory-fit filter**, and recommends the highest-scoring model that does not exceed the machine's capability. It can then download a **GGUF from Hugging Face** and run it locally with a **bundled llama.cpp runtime** — no Ollama installation and no background server to manage. The interactive chat streams tokens, renders Markdown, and opens a `Ctrl+X` command palette for models, downloads, MCP servers and settings. Every number is computed by a documented formula, and every score can be inspected with `--verbose` or `--json`.
 
 It is a planning tool, not a benchmark. Tokens/sec values are memory-bandwidth **estimates** with an explicit ±35% range. The chat is a conversational TUI (it does not edit files or run tools).
 
@@ -21,7 +21,7 @@ Bare `alocal` opens the chat UI in an interactive terminal; `alocal --help` list
 
 ## Quick start
 
-Prerequisites: **Go 1.22+** to build from source. **Ollama** (<https://ollama.com>) is only needed for chat and `pull`.
+Prerequisites: **Go 1.22+** to build from source. Nothing else is required: Alocal downloads GGUFs from Hugging Face and fetches a small llama.cpp runtime on first use.
 
 ### One-line install
 
@@ -57,9 +57,8 @@ alocal recommend                  # best model for this machine
 alocal recommend --task coding    # prefer coding models
 alocal explain qwen2.5-7b-instruct-q4_k_m
 alocal models --quant Q4_K_M --min-context 32768
-alocal pull qwen2.5-7b-instruct-q4_k_m
-ollama serve                      # in a second terminal, if Ollama is not running
-alocal                            # opens chat with the best fitted/pulled model
+alocal pull qwen2.5-7b-instruct-q4_k_m   # downloads a GGUF from Hugging Face
+alocal                            # opens chat with the best fitted/downloaded model
 ```
 
 On Windows, build with `go build -o alocal.exe .\cmd\alocal` and put the `.exe` on PATH. `make cross` builds six static binaries (Linux/macOS/Windows × amd64/arm64) into `dist/`.
@@ -68,23 +67,54 @@ No Go is needed to run a prebuilt release binary. Detection degrades gracefully:
 
 ### Interactive chat
 
-`alocal` (or `alocal chat`) is a full-screen terminal UI backed by Ollama's streaming API. Bare `alocal` is equivalent to `alocal chat --auto`; in a non-interactive shell it prints help instead.
+Bare `alocal` opens a full-screen terminal UI. The startup screen draws a fastfetch/neofetch-style block-glyph wordmark (no emoji), then shows the active model, context size, and local runtime. In a non-interactive shell it prints help instead.
 
 ```bash
-alocal                                                  # opens chat with auto-selected model
-alocal chat qwen3:0.6b                                  # use an installed model
+alocal                                                  # opens chat; auto-selects a downloaded GGUF
+alocal chat                                             # same UI, explicit command
 alocal chat --auto                                      # recommend the best fit for this machine
 alocal chat --auto --mock-hardware tests/fixtures/rtx4090.json
-alocal chat phi4-mini:latest --system "You are a concise coding assistant"
-alocal chat --ollama-url http://remote-host:11434 qwen3:0.6b
+alocal pull bartowski/Qwen2.5-7B-Instruct-GGUF --quant Q5_K_M
+alocal chat bartowski/Qwen2.5-7B-Instruct-GGUF/model-Q5_K_M.gguf \
+  --system "You are a concise coding assistant"
 ```
 
-- If you omit the model and `--auto`, the first installed Ollama model is used.
-- `--auto` picks the best catalog model for your hardware, then **checks that it is pulled**. If it is not, Alocal uses an already-pulled model so the UI still opens, and prints the exact `alocal pull <id>` / `ollama pull <tag>` command needed to get the recommendation. If nothing is pulled yet, it stops with the pull instructions.
-- Keys: `Enter` send, `Shift+Enter` newline, `Esc` stop generation, `Ctrl+C` / `Ctrl+D` quit.
-- Slash commands: `/help`, `/clear`, `/model <name>`, `/system <prompt>`, `/info`, `/models`, `/quit`.
+- `--auto` scans hardware, picks the best-fitting catalog model, and uses a downloaded GGUF from the same Hugging Face repo if available. Otherwise it prints the exact `alocal pull` command and opens the UI anyway so you can download from the palette.
+- With no downloaded GGUF, `alocal` still starts. Press `Ctrl+X` → **Download GGUF from Hugging Face**, enter `owner/repo`, pick a file, and Alocal downloads, verifies, and loads it without restarting.
+- Inference runs in a private `llama-server` started by Alocal on a free localhost port. Context length and GPU offload come from Alocal's fit calculation plus your settings; the KV cache is sized by the same formula used by `alocal explain`.
+- Keys: `Enter` send, `Shift+Enter` newline, `Esc` stop generation, `Ctrl+C` / `Ctrl+D` quit, `Ctrl+X` command palette.
+- Slash commands: `/help`, `/clear`, `/model <id>`, `/system <prompt>`, `/info`, `/models`, `/quit`.
 - Requires an interactive terminal; piping stdin/stdout is rejected with a clear error.
-- Errors use the same exit codes as other commands; chat needs Ollama reachable at `$OLLAMA_HOST` or `http://localhost:11434`.
+
+#### `Ctrl+X` command palette
+
+| Entry | What it does |
+|---|---|
+| Switch model | Pick any downloaded GGUF; Alocal restarts the local runtime with it. |
+| Download GGUF from Hugging Face | Enter `owner/repo`, choose a `.gguf` file, watch progress, then auto-load it. |
+| Scan hardware | Show the Hardware Score, tier, and usable memory inline. |
+| Recommend a model | Show the top three models that fit this machine and their tok/s estimates. |
+| Explain a model | Show weights + KV cache + overhead and the Hugging Face repo for a catalog id. |
+| MCP servers | List configured servers; press `A` to add `name command [args...]`, `D` to delete. |
+| Settings | Set `context gpu_layers temperature` (for example `8192 -1 0.7`). |
+| Help / Quit | Key reference and exit. |
+
+`↑`/`↓` (or `k`/`j`) navigate, typing filters, `Enter` selects, `Esc` goes back or closes the palette. MCP server definitions live in `~/.config/alocal/mcp.json`; they are configuration for future tool-enabled sessions, not active tool calls in this conversational TUI.
+
+#### Local files, runtime, and credentials
+
+| Path / variable | Purpose |
+|---|---|
+| `~/.local/share/alocal/models/` | Downloaded GGUF files. |
+| `~/.local/share/alocal/models.json` | Registry of downloaded models (id, repo, file, size, quant). |
+| `~/.local/share/alocal/runtime/` | llama.cpp `llama-server` binary plus bundled shared libraries, fetched once. |
+| `~/.config/alocal/settings.json` | Context, `-ngl` layers, temperature, system prompt, last model. |
+| `~/.config/alocal/mcp.json` | MCP server definitions edited in the palette. |
+| `ALOCAL_DATA_DIR`, `ALOCAL_CONFIG_DIR` | Override the directories above. |
+| `ALOCAL_LLAMA_SERVER` | Use an existing `llama-server` binary instead of downloading one. |
+| `HF_ENDPOINT`, `HF_TOKEN` | Hugging Face mirror and token for private or gated repositories. |
+
+No Ollama daemon is used. If `llama-server` is already on `PATH`, Alocal uses it; otherwise it fetches the matching static llama.cpp release for Linux/macOS/Windows on amd64 or arm64. Patch versions are pinned by the release asset it selects at first run.
 
 ### Reproducible demos without owning the hardware
 
@@ -103,14 +133,14 @@ A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`
 
 | Command | Purpose |
 |---|---|
-| `alocal` | Open the interactive chat UI with auto model selection (TTY only; prints help otherwise). |
+| `alocal` | Open the interactive chat UI with auto model selection (TTY only; prints help otherwise). No model needed to start. |
 | `alocal scan` | Detect CPU, RAM, GPU(s), disk, OS/container/WSL. Shows the Hardware Score breakdown. |
 | `alocal score` | Print only the score (tab-separated in plain mode). `--verbose` shows components. |
 | `alocal recommend` | Hard memory filter + nearest-model-score rule. Shows alternatives and reasons. |
-| `alocal models` | Browse/filter the catalog (`--task`, `--family`, `--quant`, `--runtime`, `--min-context`, `--max-size`). |
+| `alocal models` | Browse/filter the catalog (`--task`, `--family`, `--quant`, `--runtime`, `--min-context`, `--max-size`); `--local` lists downloaded GGUFs. |
 | `alocal explain <id>` | Per-model fit: KV cache, overhead, required memory, score comparison, tok/s estimate. |
-| `alocal pull <id>` | Run `ollama pull` for a catalog model after confirmation. Graceful when Ollama is missing. |
-| `alocal chat [model]` | Interactive streaming chat TUI via Ollama. `--auto` selects the best model for this hardware. |
+| `alocal pull <id\|owner/repo>` | Download a GGUF from Hugging Face into `~/.local/share/alocal/models` with quant/file selection and GGUF verification. |
+| `alocal chat [model]` | Interactive streaming chat TUI with a local llama.cpp runtime. `--auto` selects the best model for this hardware. |
 | `alocal catalog validate` | Recompute every model score from the schema and report mismatches. `--file` validates an external file. |
 
 Global flags:
@@ -128,7 +158,7 @@ Global flags:
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Runtime/detection/data error (missing tool, unreadable file, `ollama pull` failed) |
+| `1` | Runtime/detection/data error (unreadable file, failed Hugging Face download, invalid GGUF, llama.cpp server failure) |
 | `2` | Usage or invalid-input error (unknown flag/model/task, bad catalog, validation failure) |
 | `3` | Valid query, but no ideal match (no model fits memory, or all fitting models exceed the hardware score). Output is still produced. |
 
@@ -404,7 +434,7 @@ go run ./scripts/gen_models.go     # regenerates models.json from base definitio
 ./alocal catalog validate          # recomputes scores and checks the schema
 ```
 
-Validation checks unique IDs, lowercase slugs, known quantization/task/runtime labels, positive sizes, KV architecture fields, and that stored `model_score` matches the formula. CI fails on any mismatch.
+Validation checks unique IDs, lowercase slugs, known quantization/task/runtime labels, positive sizes, KV architecture fields, and that stored `model_score` matches the formula. CI fails on any mismatch. The `ollama` field is kept only as a cross-runtime reference; Alocal itself uses `llamacpp` (a Hugging Face GGUF repo) for downloads and inference.
 
 ---
 
@@ -438,7 +468,7 @@ make cross             # six static binaries into dist/
 make smoke             # offline smoke tests using the fixtures
 
 # Or with Go directly:
-go test ./...          # unit + integration tests (scoring, catalog, matching, CLI, chat, Ollama)
+go test ./...          # unit + integration tests (scoring, catalog, matching, CLI, chat, HF, runtime)
 go vet ./...
 go test -race ./...
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/alocal
@@ -456,8 +486,10 @@ internal/scoring/    curves, hardware score, model score, throughput
 internal/catalog/    schema, validation, filters, runtime tags
 internal/match/      hard memory filter + recommendation rule
 internal/cli/        cobra commands, text/JSON rendering
-internal/chat/       bubbletea chat TUI (streaming, Markdown, slash commands)
-internal/ollama/     streaming Ollama HTTP client
+internal/hf/         Hugging Face repo metadata, GGUF picker, verified downloader
+internal/runtime/    llama.cpp asset installer, llama-server lifecycle, streaming API client
+internal/local/      GGUF registry, settings, MCP config, path helpers
+internal/chat/       bubbletea chat TUI (block-glyph logo, streaming, Markdown, Ctrl+X palette)
 data/                gpus.json, models.json, //go:embed
 tests/fixtures/      five reproducible machine profiles
 scripts/             catalog generator

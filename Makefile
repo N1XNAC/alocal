@@ -58,7 +58,8 @@ smoke: build
 	./$(BINARY) score --mock-hardware tests/fixtures/rtx3060.json
 	./$(BINARY) recommend --mock-hardware tests/fixtures/rtx3060.json --top 1
 	./$(BINARY) models --task coding --quant Q4_K_M
-	./$(BINARY) pull qwen2.5-7b-instruct-q4_k_m --dry-run
+	./$(BINARY) models --local
+	./$(BINARY) pull qwen2.5-7b-instruct-q4_k_m --file Qwen2.5-7B-Instruct-Q4_K_M.gguf --dry-run
 
 clean:
 	rm -f $(BINARY) $(BINARY).exe
