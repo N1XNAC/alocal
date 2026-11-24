@@ -1,0 +1,9 @@
+# Binaries
+/llmfit
+/llmfit.exe
+/dist/
+
+# Go test/build artifacts
+*.test
+*.out
+coverage.*

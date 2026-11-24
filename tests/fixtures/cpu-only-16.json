@@ -1,0 +1,21 @@
+{
+  "os": { "name": "linux", "version": "fixture", "arch": "x86_64" },
+  "cpu": {
+    "model": "Intel Core i5-1235U",
+    "physical_cores": 10,
+    "logical_threads": 12,
+    "base_mhz": 1300,
+    "max_mhz": 4400,
+    "arch": "x86_64",
+    "simd": ["AVX2", "F16C", "SSE4.2"]
+  },
+  "ram": { "total_gb": 16, "available_gb": 11.5, "type": "DDR4", "speed_mts": 3200 },
+  "gpus": [],
+  "disk": {
+    "mount": "/",
+    "device": "/dev/nvme0n1p2",
+    "kind": "nvme",
+    "total_gb": 512,
+    "free_gb": 180
+  }
+}

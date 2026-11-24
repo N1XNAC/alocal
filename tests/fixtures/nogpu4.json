@@ -1,0 +1,21 @@
+{
+  "os": { "name": "linux", "version": "fixture", "arch": "x86_64" },
+  "cpu": {
+    "model": "Intel Celeron N4020",
+    "physical_cores": 2,
+    "logical_threads": 2,
+    "base_mhz": 1100,
+    "max_mhz": 2800,
+    "arch": "x86_64",
+    "simd": ["SSE4.2"]
+  },
+  "ram": { "total_gb": 4, "available_gb": 2.8, "type": "DDR4", "speed_mts": 2400 },
+  "gpus": [],
+  "disk": {
+    "mount": "/",
+    "device": "/dev/sda1",
+    "kind": "ssd",
+    "total_gb": 128,
+    "free_gb": 30
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "os": { "name": "linux", "version": "fixture", "arch": "x86_64" },
+  "cpu": {
+    "model": "AMD Ryzen 7 5800X 8-Core Processor",
+    "physical_cores": 8,
+    "logical_threads": 16,
+    "base_mhz": 3800,
+    "max_mhz": 4700,
+    "arch": "x86_64",
+    "simd": ["AVX2", "F16C", "SSE4.2"]
+  },
+  "ram": { "total_gb": 32, "available_gb": 26, "type": "DDR4", "speed_mts": 3200 },
+  "gpus": [
+    {
+      "vendor": "NVIDIA",
+      "name": "NVIDIA GeForce RTX 3060",
+      "kind": "discrete",
+      "vram_total_gb": 12,
+      "vram_free_gb": 11.4,
+      "driver": "555.99",
+      "source": "fixture"
+    }
+  ],
+  "disk": {
+    "mount": "/",
+    "device": "/dev/nvme0n1p2",
+    "kind": "nvme",
+    "total_gb": 1000,
+    "free_gb": 500
+  }
+}

@@ -1,0 +1,404 @@
+# llmfit
+
+`llmfit` is a single-binary Go CLI that answers one question honestly:
+
+> **What is the largest local LLM this machine can actually run well?**
+
+It detects the hardware, turns it into a transparent **Hardware Score (0–100)**, scores an embedded catalog of 97 local models, applies a **hard memory-fit filter**, and recommends the highest-scoring model that does not exceed the machine's capability. Every number is computed by a documented formula, and every score can be inspected with `--verbose` or `--json`.
+
+It is a planning tool, not a benchmark. Tokens/sec values are memory-bandwidth **estimates** with an explicit ±35% range.
+
+```
+go build -o llmfit ./cmd/llmfit
+./llmfit scan
+./llmfit recommend
+```
+
+The root command prints help; start with `llmfit scan`, then `llmfit recommend`.
+
+---
+
+## Quick start
+
+```bash
+git clone <your-fork> llmfit && cd llmfit
+go build -o llmfit ./cmd/llmfit
+
+./llmfit scan                     # hardware report + Hardware Score
+./llmfit recommend                # best model for this machine
+./llmfit recommend --task coding  # prefer coding models
+./llmfit explain qwen2.5-7b-instruct-q4_k_m
+./llmfit models --quant Q4_K_M --min-context 32768
+./llmfit pull qwen2.5-7b-instruct-q4_k_m
+```
+
+No Go needed to run a release binary. Detection degrades gracefully: if `nvidia-smi`, `rocm-smi`, or WMI is unavailable, `llmfit` records a warning and keeps going instead of failing.
+
+### Reproducible demos without owning the hardware
+
+Every command accepts a mock profile, so the examples below can be reproduced on any machine:
+
+```bash
+./llmfit scan      --mock-hardware tests/fixtures/rtx3060.json
+./llmfit recommend --mock-hardware tests/fixtures/rtx3060.json
+```
+
+A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`).
+
+---
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `llmfit scan` | Detect CPU, RAM, GPU(s), disk, OS/container/WSL. Shows the Hardware Score breakdown. |
+| `llmfit score` | Print only the score (tab-separated in plain mode). `--verbose` shows components. |
+| `llmfit recommend` | Hard memory filter + nearest-model-score rule. Shows alternatives and reasons. |
+| `llmfit models` | Browse/filter the catalog (`--task`, `--family`, `--quant`, `--runtime`, `--min-context`, `--max-size`). |
+| `llmfit explain <id>` | Per-model fit: KV cache, overhead, required memory, score comparison, tok/s estimate. |
+| `llmfit pull <id>` | Run `ollama pull` for a catalog model after confirmation. Graceful when Ollama is missing. |
+| `llmfit catalog validate` | Recompute every model score from the schema and report mismatches. `--file` validates an external file. |
+
+Global flags:
+
+```
+--json             machine-readable output (stable field names)
+--verbose          raw detection sources + score details
+--mock-hardware F  load a mock profile from JSON, or "-" for stdin
+```
+
+`NO_COLOR=1` disables ANSI styling. When stdout is not a TTY, output is plain text.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Runtime/detection/data error (missing tool, unreadable file, `ollama pull` failed) |
+| `2` | Usage or invalid-input error (unknown flag/model/task, bad catalog, validation failure) |
+| `3` | Valid query, but no ideal match (no model fits memory, or all fitting models exceed the hardware score). Output is still produced. |
+
+---
+
+## How the Hardware Score works
+
+```
+Hardware Score = 0.50 × memory + 0.25 × bandwidth + 0.20 × compute + 0.05 × disk
+```
+
+Each component is 0–100 and the score is the weighted sum, rounded to one decimal.
+
+### Effective model memory (the hard limit)
+
+| Machine | Effective memory |
+|---|---|
+| Discrete GPU(s) | `min(free VRAM, total VRAM × 0.95)` summed across GPUs |
+| Apple Silicon (unified) | `total RAM × 0.70` |
+| CPU-only | `available RAM` (if unknown: `total × 0.75`) |
+
+A separate **15% safety reserve** is applied when matching: `safe_limit = effective_memory × 0.85`. It can be changed with `--safety-margin 0.01…0.5`; passing `0` falls back to the default 15%.
+
+### Memory component
+
+Piecewise-linear interpolation over required memory:
+
+```
+0.3 GB → 3    1 GB → 9     2 GB → 15    4 GB → 25     8 GB → 40
+12 GB → 51    16 GB → 58   24 GB → 68   32 GB → 75    48 GB → 84
+64 GB → 89    96 GB → 95   192 GB → 100
+```
+
+### Bandwidth component
+
+Log-like curve, because 50→100 GB/s matters more than 900→1000:
+
+```
+25 GB/s → 12   50 → 25   100 → 40   200 → 54   400 → 72
+600 → 82       800 → 88  1000 → 91  1600 → 96  2500 → 99
+```
+
+- Discrete GPU: table value; multiple GPUs use **fastest + 10% of the others**.
+- Apple: unified-memory bandwidth from the GPU table.
+- CPU-only: estimated from RAM type/speed (dual-channel assumption), e.g. DDR4-3200 → 51.2 GB/s.
+
+### Compute component
+
+- Discrete GPU: compute tier from `data/gpus.json` (multi-GPU: fastest + 5% of others).
+- Apple GPU: Metal compute tier from the GPU table.
+- CPU-only: `cores × GHz × SIMD factor`, mapped as `65 × sqrt(effort / 64)`, capped at 65.
+
+SIMD factors: AVX-512 1.50, AVX2 1.25, NEON 1.20, SSE4.2 1.00, unknown 0.90.
+
+### Disk component
+
+NVMe 100, SSD 80, HDD 25, unknown 50. Free space caps the score: `<10 GB` → max 10, `<25 GB` → max 35.
+
+### Tiers
+
+| Score | Tier |
+|---|---|
+| < 30 | Entry |
+| 30–49 | Mid |
+| 50–69 | High |
+| 70–84 | Enthusiast |
+| ≥ 85 | Workstation |
+
+---
+
+## How the Model Score works
+
+Each catalog entry stores the architecture needed to estimate its KV cache:
+
+```
+KV bytes/token = 2 (K and V) × layers × kv_heads × head_dim × 2 bytes
+KV cache GB    = context_tokens × KV bytes/token ÷ 1e9
+required GB    = (file_size_GB + KV cache GB) × 1.12 + 0.35
+memory_score   = memory_need_curve(required GB)
+demand_score   = demand_curve(active_params_B × bits_per_weight ÷ 8)
+model_score    = 0.70 × memory_score + 0.30 × demand_score
+```
+
+- `1.12` covers KV growth, scratch buffers, and allocator overhead; `0.35 GB` is fixed backend/context overhead.
+- Active parameters are used for MoE models, so a sparse 30B model is not punished like a dense one.
+- Effective bits per weight: `Q3_K_M 3.90`, `Q4_K_M 4.85`, `Q5_K_M 5.70`, `Q6_K 6.60`, `Q8_0 8.50`, `FP16 16.0`.
+- The `demand_curve` is a 0–100 curve over active weight bytes.
+
+`llmfit catalog validate` recomputes every score. The shipped catalog is generated by `scripts/gen_models.go`, which calls the same scoring code and refuses to write inconsistent data.
+
+### Recommendation rule
+
+1. Filter by requested `--task`, `--runtime`, and minimum supported `--context`.
+2. Apply the hard memory filter: `required GB ≤ effective memory × (1 − safety margin)`. A model over the line is **never** recommended, no matter how good its score.
+3. Among fitting models, choose the **highest Model Score that does not exceed the Hardware Score**. This avoids recommending a model the machine can technically load but cannot run comfortably.
+4. Tie-breakers, in order: larger parameter count, newer release year, task match, then ID.
+5. If every fitting model exceeds the Hardware Score → `over_budget` (exit 3), still shown with a clear warning.
+6. If nothing fits → `no_fit` (exit 3), with concrete upgrade suggestions (more VRAM, enough unified RAM, smaller quantization).
+
+`recommend` always includes safer (smaller) and stretch (larger or slower) alternatives.
+
+### Tokens/sec estimate
+
+```
+tok/s ≈ effective bandwidth (GB/s) ÷ active weight GB × efficiency
+active weight GB = active_params_B × bits_per_weight ÷ 8
+```
+
+Efficiency: discrete GPU 0.45, Apple GPU 0.42, CPU 0.30 × SIMD adjustment. Values are capped at 250 tok/s and shown with a ±35% range.
+
+**This is a roofline estimate, not a benchmark.** Quantization kernels, backend, batch size, context length, and layer offload all change real performance.
+
+---
+
+## Three example machines
+
+### 1. RTX 3060 12 GB + Ryzen 7 5800X + 32 GB
+
+```console
+$ llmfit scan --mock-hardware tests/fixtures/rtx3060.json
+llmfit hardware scan
+  MOCK PROFILE — values came from a JSON file, not this machine
+
+System
+  OS: linux fixture (x86_64)
+
+CPU
+  Model: AMD Ryzen 7 5800X 8-Core Processor
+  Cores: 8 physical / 16 logical
+  Clock: base 3.80 GHz / max 4.70 GHz
+  Architecture: x86_64
+  SIMD: AVX2, F16C, SSE4.2
+
+Memory
+  Total: 32.0 GB
+  Available: 26.0 GB
+  Type / speed: DDR4 / 3200 MT/s
+  Est. bandwidth: 51.2 GB/s (theoretical dual-channel estimate)
+
+GPU
+  NVIDIA GeForce RTX 3060 (NVIDIA, discrete)
+    VRAM: 12.0 GB total, 11.4 GB free
+    Bandwidth: 360 GB/s · compute tier 63/100
+    Driver: 555.99
+    source: fixture
+
+Disk
+  Type: NVME
+  Free: 500.0 GB of 1000.0 GB
+  Mount: /
+  Device: /dev/nvme0n1p2
+
+Hardware score
+  59.6 / 100  High  ·  effective memory 11.4 GB
+
+Next: llmfit recommend
+
+$ llmfit recommend --mock-hardware tests/fixtures/rtx3060.json --top 3
+llmfit recommendation
+  Hardware: 59.6 / 100  High  ·  11.4 GB usable discrete VRAM
+  Safe memory limit: 9.7 GB (15% reserve)
+  Filters: context 8192
+
+  Best fit: Yi 1.5 9B Chat (Q5_K_M). It needs 9.2 GB; your safe limit is 9.7 GB.
+
+Recommended
+MODEL                    QUANT   PARAMS  MODEL/HW     MEMORY  FITS  TOK/S EST
+Yi 1.5 9B Chat           Q5_K_M  8.8B    43.0 / 59.6  9.2 GB  yes   25.7 (16.7–34.7)
+Granite 3.1 8B Instruct  Q5_K_M  8.2B    40.9 / 59.6  8.4 GB  yes   27.9 (18.2–37.7)
+Qwen3 8B                 Q5_K_M  8.2B    40.6 / 59.6  8.2 GB  yes   27.9 (18.2–37.7)
+```
+
+The 12 GB card cannot hold a comfortable 14B at 8K context, so `llmfit` prefers a 9B at Q5 rather than a 14B at the edge of free VRAM.
+
+### 2. MacBook Air M2, 8 GB unified memory
+
+```console
+$ llmfit recommend --mock-hardware tests/fixtures/m2air8.json --top 3
+llmfit recommendation
+  Hardware: 38.7 / 100  Mid  ·  5.6 GB usable unified memory
+  Safe memory limit: 4.8 GB (15% reserve)
+
+  Best fit: Qwen2.5 3B Instruct (Q8_0). It needs 4.4 GB; your safe limit is 4.8 GB.
+
+Recommended
+MODEL                  QUANT   PARAMS  MODEL/HW     MEMORY  FITS  TOK/S EST
+Qwen2.5 3B Instruct    Q8_0    3.1B    27.3 / 38.7  4.4 GB  yes   12.7 (8.3–17.2)
+Gemma 3 4B IT          Q4_K_M  4.3B    26.7 / 38.7  4.6 GB  yes   16.2 (10.5–21.8)
+Qwen2.5 1.5B Instruct  FP16    1.5B    26.6 / 38.7  4.2 GB  yes   13.5 (8.8–18.3)
+```
+
+Only 70% of the 8 GB is treated as GPU-usable, so 4B-class models are the practical ceiling at 8K context.
+
+### 3. CPU-only laptop, 16 GB RAM
+
+```console
+$ llmfit recommend --mock-hardware tests/fixtures/cpu-only-16.json --top 3
+llmfit recommendation
+  Hardware: 42.8 / 100  Mid  ·  11.5 GB usable system RAM
+  Safe memory limit: 9.8 GB (15% reserve)
+
+  Best fit: Granite 3.1 8B Instruct (Q5_K_M). It needs 8.4 GB; your safe limit is 9.8 GB.
+
+Recommended
+MODEL                    QUANT   PARAMS  MODEL/HW     MEMORY  FITS  TOK/S EST
+Granite 3.1 8B Instruct  Q5_K_M  8.2B    40.9 / 42.8  8.4 GB  yes   2.6 (1.7–3.6)
+Qwen3 8B                 Q5_K_M  8.2B    40.6 / 42.8  8.2 GB  yes   2.6 (1.7–3.6)
+Llama 3.1 8B Instruct    Q5_K_M  8.0B    39.9 / 42.8  8.0 GB  yes   2.7 (1.8–3.6)
+```
+
+The model fits, but the estimated 2–3 tok/s is the honest answer: CPU inference is bandwidth-bound. The report calls this a "stretch pick" rather than pretending it will feel fast.
+
+Two more fixtures are included: `rtx4090.json` (24 GB, 64 GB RAM) and `nogpu4.json` (4 GB RAM, deliberately no-fit for most of the catalog).
+
+---
+
+## Editing the data
+
+Both data files are embedded into the binary at build time through `data/embed.go`.
+
+### `data/gpus.json`
+
+A lookup table used for VRAM, bandwidth, compute tier, and vendor fallbacks.
+
+```json
+{
+  "pattern": "(?i)\\bRTX\\s?3060\\b",
+  "vendor": "NVIDIA",
+  "kind": "discrete",
+  "vram_gb": 12,
+  "bandwidth_gbps": 360,
+  "compute_tier": 63
+}
+```
+
+- `pattern` is a Go regular expression matched against the detected GPU name.
+- `kind` is `discrete`, `integrated`, or `unified`.
+- Per-vendor fallbacks are used when no pattern matches, so a new GPU is never scored as zero.
+- Add a row, run `go test ./internal/gpu`, and rebuild. The table has ~100 entries.
+
+### `data/models.json`
+
+Each entry carries identity, sizing, architecture, tasks, license, and runtime references:
+
+```json
+{
+  "id": "qwen2.5-7b-instruct-q4_k_m",
+  "family": "Qwen2.5",
+  "display_name": "Qwen2.5 7B Instruct",
+  "params_b": 7.62,
+  "active_params_b": 7.62,
+  "quant": "Q4_K_M",
+  "file_size_gb": 4.62,
+  "max_context": 32768,
+  "tasks": ["chat", "general"],
+  "license": "Apache-2.0",
+  "release_year": 2024,
+  "arch": { "layers": 28, "kv_heads": 4, "head_dim": 128 },
+  "runtimes": {
+    "ollama": "qwen2.5:7b-instruct-q4_K_M",
+    "llamacpp": "hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF",
+    "lmstudio": "lmstudio-community/Qwen2.5-7B-Instruct-GGUF"
+  },
+  "score_context": 8192,
+  "model_score": 33.9
+}
+```
+
+After editing, regenerate or validate:
+
+```bash
+go run ./scripts/gen_models.go     # regenerates models.json from base definitions
+./llmfit catalog validate          # recomputes scores and checks the schema
+```
+
+Validation checks unique IDs, lowercase slugs, known quantization/task/runtime labels, positive sizes, KV architecture fields, and that stored `model_score` matches the formula. CI fails on any mismatch.
+
+---
+
+## What is measured vs estimated
+
+**Measured (from the OS):** CPU model, core counts, clocks, architecture, SIMD flags; total/available RAM and memory type/speed where the platform exposes it; GPU name and VRAM/free VRAM from `nvidia-smi`, `rocm-smi`, sysfs, macOS `system_profiler`, or Windows WMI; disk type, size, and free space; OS, kernel, container/WSL flags.
+
+**Estimated:** GPU bandwidth and compute tier come from the table when the driver does not report them; CPU bandwidth is a dual-channel theoretical estimate; KV cache and runtime overhead are formula-based; tokens/sec is a roofline model.
+
+**Known limitations**
+
+- Apple unified memory is capped at 70% of RAM; real headroom depends on macOS and other apps.
+- Multi-GPU VRAM is summed, but tensor-split scaling is not linear.
+- Integrated GPUs are treated as low-capability and do not replace system RAM for fit decisions.
+- Detectable-but-exotic GPUs may use a vendor fallback until added to `gpus.json`.
+- Model scores assume the stated quantization/architecture metadata; wrong metadata produces wrong scores.
+- Tokens/sec ignores prompt processing, batching, and backend-specific kernels.
+
+The tool never claims a benchmark result. If a number is estimated, it says so next to the number.
+
+---
+
+## Development
+
+```bash
+go test ./...          # unit + integration tests (scoring, catalog, matching, CLI)
+go vet ./...
+go test -race ./...
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/llmfit
+GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/llmfit
+GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/llmfit
+```
+
+Layout:
+
+```
+cmd/llmfit/          entry point, panic recovery
+internal/hardware/   detection per OS + mock loader + Detector interface
+internal/gpu/        embedded GPU table, vendor matching, RAM bandwidth
+internal/scoring/    curves, hardware score, model score, throughput
+internal/catalog/    schema, validation, filters, runtime tags
+internal/match/      hard memory filter + recommendation rule
+internal/cli/        cobra commands, text/JSON rendering
+data/                gpus.json, models.json, //go:embed
+tests/fixtures/      five reproducible machine profiles
+scripts/             catalog generator
+```
+
+Mock profiles follow the same schema as `llmfit scan --json`; a profile needs a CPU model plus RAM or GPU data to normalize. Tests cover the five fixtures, score formulas, catalog integrity, CLI exit codes, and JSON contracts.
+
+CI (`.github/workflows/ci.yml`) runs formatting, vet, tests, and a build matrix for Linux/macOS/Windows on amd64 and arm64.
