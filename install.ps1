@@ -41,6 +41,22 @@ try {
   New-Item -ItemType Directory -Path $installDir -Force | Out-Null
   Copy-Item -Path (Join-Path $tmp $asset) -Destination (Join-Path $installDir 'alocal.exe') -Force
   Write-Host "Installed $installDir\alocal.exe"
+
+  # Remember where `alocal update` should fetch new releases.
+  if ($repo -or $baseOverride) {
+    $configDir = if ($env:ALOCAL_CONFIG_DIR) {
+      $env:ALOCAL_CONFIG_DIR
+    } elseif ($env:XDG_CONFIG_HOME) {
+      Join-Path $env:XDG_CONFIG_HOME 'alocal'
+    } else {
+      Join-Path $env:USERPROFILE '.config\alocal'
+    }
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    $source = @{ repo = $repo; base_url = $baseOverride } | ConvertTo-Json -Compress
+    Set-Content -Path (Join-Path $configDir 'update.json') -Value $source -Encoding utf8
+    Write-Host "Saved update source to $configDir\update.json"
+  }
+
   Write-Host "Add $installDir to your PATH, then run: alocal"
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

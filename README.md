@@ -44,6 +44,18 @@ irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
 
 Options: `ALOCAL_VERSION=v0.2.0` pins a release, `ALOCAL_INSTALL_DIR=/path/to/bin` changes the destination, and `ALOCAL_BASE_URL=https://mirror/...` points at a mirror. To publish releases yourself, push a `v*` tag: `.github/workflows/release.yml` builds all six static binaries plus `checksums.txt`.
 
+### Update Alocal
+
+The installer remembers the release source, so updating is one command:
+
+```bash
+alocal update --check          # report current and latest version
+alocal update                  # download, verify, and replace the binary
+alocal update --tag v0.2.0 --yes
+```
+
+`alocal update --repo owner/repo`, `ALOCAL_REPO`, `ALOCAL_BASE_URL`, or `~/.config/alocal/update.json` can supply the source if it was not saved at install time. The new binary is checked against the release's `checksums.txt` before replacing the running executable. On Windows the previous binary is kept as `alocal.exe.old` until you restart and delete it.
+
 ### From a cloned checkout
 
 ```bash
@@ -110,6 +122,7 @@ alocal chat bartowski/Qwen2.5-7B-Instruct-GGUF/model-Q5_K_M.gguf \
 | `~/.local/share/alocal/runtime/` | llama.cpp `llama-server` binary plus bundled shared libraries, fetched once. |
 | `~/.config/alocal/settings.json` | Context, `-ngl` layers, temperature, system prompt, last model. |
 | `~/.config/alocal/mcp.json` | MCP server definitions edited in the palette. |
+| `~/.config/alocal/update.json` | Release source used by `alocal update`, written by the installers. |
 | `ALOCAL_DATA_DIR`, `ALOCAL_CONFIG_DIR` | Override the directories above. |
 | `ALOCAL_LLAMA_SERVER` | Use an existing `llama-server` binary instead of downloading one. |
 | `HF_ENDPOINT`, `HF_TOKEN` | Hugging Face mirror and token for private or gated repositories. |
@@ -141,6 +154,7 @@ A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`
 | `alocal explain <id>` | Per-model fit: KV cache, overhead, required memory, score comparison, tok/s estimate. |
 | `alocal download <id\|owner/repo>` | Download a GGUF from Hugging Face into `~/.local/share/alocal/models` with quant/file selection and GGUF verification. `alocal pull` and `alocal get` are aliases. |
 | `alocal chat [model]` | Interactive streaming chat TUI with a local llama.cpp runtime. `--auto` selects the best model for this hardware. |
+| `alocal update` | Check or install a newer release binary, verified against `checksums.txt`. |
 | `alocal catalog validate` | Recompute every model score from the schema and report mismatches. `--file` validates an external file. |
 
 Global flags:
@@ -488,7 +502,8 @@ internal/match/      hard memory filter + recommendation rule
 internal/cli/        cobra commands, text/JSON rendering
 internal/hf/         Hugging Face repo metadata, GGUF picker, verified downloader
 internal/runtime/    llama.cpp asset installer, llama-server lifecycle, streaming API client
-internal/local/      GGUF registry, settings, MCP config, path helpers
+internal/local/      GGUF registry, settings, MCP config, update source, path helpers
+internal/update/     self-updater: GitHub release lookup, checksum verification, atomic replace
 internal/chat/       bubbletea chat TUI (block-glyph logo, streaming, Markdown, Ctrl+X palette)
 data/                gpus.json, models.json, //go:embed
 tests/fixtures/      five reproducible machine profiles

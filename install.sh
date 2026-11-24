@@ -13,6 +13,10 @@ BASE_URL="${ALOCAL_BASE_URL:-}"
 say() { printf '%s\n' "$*"; }
 die() { printf 'alocal installer: %s\n' "$*" >&2; exit 1; }
 
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
 fetch() {
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$1" -o "$2"
@@ -90,6 +94,15 @@ else
 fi
 
 say "Installed $INSTALL_DIR/$BIN"
+
+# Remember where `alocal update` should fetch new releases.
+if [ -n "$REPO" ] || [ -n "$BASE_URL" ]; then
+  config_dir="${ALOCAL_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/alocal}"
+  mkdir -p "$config_dir"
+  printf '{"repo":"%s","base_url":"%s"}\n' "$(json_escape "$REPO")" "$(json_escape "$BASE_URL")" > "$config_dir/update.json"
+  say "Saved update source to $config_dir/update.json"
+fi
+
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) say "Add $INSTALL_DIR to your PATH, then run: alocal" ;;

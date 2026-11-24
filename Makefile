@@ -1,6 +1,8 @@
 BINARY ?= alocal
 CMD := ./cmd/alocal
 GO ?= go
+VERSION ?= 0.1.0
+LDFLAGS := -s -w -X alocal/internal/cli.Version=$(VERSION)
 INSTALL_DIR ?= $(HOME)/.local/bin
 DIST := dist
 TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
@@ -12,7 +14,7 @@ ARGS ?=
 all: check build
 
 build:
-	$(GO) build -trimpath -ldflags="-s -w" -o $(BINARY) $(CMD)
+	$(GO) build -trimpath -ldflags="$(LDFLAGS)" -o $(BINARY) $(CMD)
 
 install: build
 	mkdir -p $(INSTALL_DIR)
@@ -50,7 +52,7 @@ cross:
 		out="$(DIST)/$(BINARY)-$$goos-$$goarch"; \
 		if [ "$$goos" = "windows" ]; then out="$$out.exe"; fi; \
 		echo "building $$target -> $$out"; \
-		GOOS=$$goos GOARCH=$$goarch CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o "$$out" $(CMD) || exit 1; \
+		GOOS=$$goos GOARCH=$$goarch CGO_ENABLED=0 $(GO) build -trimpath -ldflags="$(LDFLAGS)" -o "$$out" $(CMD) || exit 1; \
 	done
 
 smoke: build

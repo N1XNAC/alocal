@@ -16,8 +16,8 @@ import (
 	"alocal/internal/hardware"
 )
 
-// Version is the CLI version.
-const Version = "0.1.0"
+// Version is the CLI version. Release builds override it with -ldflags.
+var Version = "0.1.0"
 
 // App carries I/O and global flags.
 type App struct {
@@ -108,6 +108,7 @@ func NewRoot(app *App) *cobra.Command {
 		newExplainCmd(app),
 		newPullCmd(app),
 		newDownloadCmd(app),
+		newUpdateCmd(app),
 		newCatalogCmd(app),
 		newChatCmd(app),
 	)
