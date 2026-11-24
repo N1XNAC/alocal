@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"llmfit/data"
-	"llmfit/internal/catalog"
+	"alocal/data"
+	"alocal/internal/catalog"
 )
 
 func newCatalogCmd(app *App) *cobra.Command {
@@ -71,7 +71,7 @@ func newCatalogValidateCmd(app *App) *cobra.Command {
 				}
 			} else {
 				u := app.ui()
-				u.Title("llmfit catalog validate")
+				u.Title("Alocal catalog validate")
 				fmt.Fprintf(u.Out, "  Source: %s\n", source)
 				fmt.Fprintf(u.Out, "  Models: %d in %d families · score context %d\n", len(cat.Models), len(families), cat.ScoreContext)
 				if len(cat.Models) > 0 {

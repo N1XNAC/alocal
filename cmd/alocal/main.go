@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"llmfit/internal/cli"
+	"alocal/internal/cli"
 )
 
 func main() {
@@ -16,7 +16,7 @@ func main() {
 func run() (code int) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "llmfit: internal error: %v\n", r)
+			fmt.Fprintf(os.Stderr, "alocal: internal error: %v\n", r)
 			code = 1
 		}
 	}()

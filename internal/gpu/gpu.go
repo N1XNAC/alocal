@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"llmfit/data"
+	"alocal/data"
 )
 
 // Entry is one row of data/gpus.json.

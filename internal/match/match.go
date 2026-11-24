@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"llmfit/internal/catalog"
-	"llmfit/internal/hardware"
-	"llmfit/internal/scoring"
+	"alocal/internal/catalog"
+	"alocal/internal/hardware"
+	"alocal/internal/scoring"
 )
 
 // Options controls recommendation behavior.
@@ -80,7 +80,7 @@ func Recommend(p *hardware.Profile, cat *catalog.Catalog, opts Options) Result {
 
 	if cat == nil || len(cat.Models) == 0 {
 		res.Status = "no_models"
-		res.Message = "The model catalog is empty. Run `llmfit catalog validate` to diagnose the data file."
+		res.Message = "The model catalog is empty. Run `alocal catalog validate` to diagnose the data file."
 		return res
 	}
 	if opts.Task != "" && !validTask(opts.Task) {

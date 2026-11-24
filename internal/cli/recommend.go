@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"llmfit/internal/match"
+	"alocal/internal/match"
 )
 
 func newRecommendCmd(app *App) *cobra.Command {
@@ -71,7 +71,7 @@ func newRecommendCmd(app *App) *cobra.Command {
 }
 
 func printRecommendations(u *UI, res match.Result, task string, context int, runtime string) {
-	u.Title("llmfit recommendation")
+	u.Title("Alocal recommendation")
 	hw := res.Hardware
 	fmt.Fprintf(u.Out, "  Hardware: %s  ·  %s usable %s\n", u.Score(hw.Score, hw.Tier), fmtGB(res.EffectiveMemoryGB), hw.MemoryKind)
 	fmt.Fprintf(u.Out, "  Safe memory limit: %s (%.0f%% reserve)\n", fmtGB(res.MemoryLimitGB), res.SafetyMargin*100)

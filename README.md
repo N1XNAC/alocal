@@ -1,46 +1,98 @@
-# llmfit
+# Alocal
 
-`llmfit` is a single-binary Go CLI that answers one question honestly:
+`Alocal` is a single-binary Go CLI that answers one question honestly:
 
 > **What is the largest local LLM this machine can actually run well?**
 
-It detects the hardware, turns it into a transparent **Hardware Score (0–100)**, scores an embedded catalog of 97 local models, applies a **hard memory-fit filter**, and recommends the highest-scoring model that does not exceed the machine's capability. Every number is computed by a documented formula, and every score can be inspected with `--verbose` or `--json`.
+It detects the hardware, turns it into a transparent **Hardware Score (0–100)**, scores an embedded catalog of 97 local models, applies a **hard memory-fit filter**, and recommends the highest-scoring model that does not exceed the machine's capability. It can then open an **interactive terminal chat** with a local Ollama model, streaming responses with Markdown rendering and slash commands. Every number is computed by a documented formula, and every score can be inspected with `--verbose` or `--json`.
 
-It is a planning tool, not a benchmark. Tokens/sec values are memory-bandwidth **estimates** with an explicit ±35% range.
+It is a planning tool, not a benchmark. Tokens/sec values are memory-bandwidth **estimates** with an explicit ±35% range. The chat is a conversational TUI (it does not edit files or run tools).
 
 ```
-go build -o llmfit ./cmd/llmfit
-./llmfit scan
-./llmfit recommend
+go build -o alocal ./cmd/alocal
+./alocal scan
+./alocal recommend
+./alocal chat --auto
 ```
 
-The root command prints help; start with `llmfit scan`, then `llmfit recommend`.
+The root command prints help; start with `alocal scan`, then `alocal recommend` or `alocal chat`.
 
 ---
 
 ## Quick start
 
-```bash
-git clone <your-fork> llmfit && cd llmfit
-go build -o llmfit ./cmd/llmfit
+Prerequisites: **Go 1.22+** to build from source. **Ollama** (<https://ollama.com>) is only needed for `chat` and `pull`.
 
-./llmfit scan                     # hardware report + Hardware Score
-./llmfit recommend                # best model for this machine
-./llmfit recommend --task coding  # prefer coding models
-./llmfit explain qwen2.5-7b-instruct-q4_k_m
-./llmfit models --quant Q4_K_M --min-context 32768
-./llmfit pull qwen2.5-7b-instruct-q4_k_m
+```bash
+git clone <your-fork> alocal && cd alocal
+make build                        # or: go build -o alocal ./cmd/alocal
+
+./alocal scan                     # hardware report + Hardware Score
+./alocal recommend                # best model for this machine
+./alocal recommend --task coding  # prefer coding models
+./alocal explain qwen2.5-7b-instruct-q4_k_m
+./alocal models --quant Q4_K_M --min-context 32768
+./alocal pull qwen2.5-7b-instruct-q4_k_m
+ollama serve                      # in a second terminal, if Ollama is not running
+./alocal chat --auto              # interactive chat (pull the model first)
 ```
 
-No Go needed to run a release binary. Detection degrades gracefully: if `nvidia-smi`, `rocm-smi`, or WMI is unavailable, `llmfit` records a warning and keeps going instead of failing.
+No Go is needed to run a prebuilt release binary. Detection degrades gracefully: if `nvidia-smi`, `rocm-smi`, or WMI is unavailable, `Alocal` records a warning and keeps going instead of failing.
+
+### Install it on your computer
+
+**Linux / macOS**
+
+```bash
+cd /path/to/alocal
+make build
+make install                      # installs to ~/.local/bin/alocal
+export PATH="$HOME/.local/bin:$PATH"
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc   # persist (use ~/.zshrc on zsh)
+
+alocal --version
+alocal scan
+```
+
+**Windows (PowerShell)**
+
+```powershell
+cd C:\path\to\alocal
+go build -o alocal.exe .\cmd\alocal
+mkdir -p "$env:LOCALAPPDATA\Alocal"
+copy alocal.exe "$env:LOCALAPPDATA\Alocal\alocal.exe"
+# Add C:\Users\<you>\AppData\Local\Alocal to your PATH, then:
+alocal scan
+```
+
+To build six static binaries (Linux/macOS/Windows × amd64/arm64), run `make cross`; they land in `dist/`.
+
+### Interactive chat
+
+`alocal chat` is a full-screen terminal UI backed by Ollama's streaming API.
+
+```bash
+alocal chat qwen3:0.6b                                  # use an installed model
+alocal chat --auto                                      # recommend the best fit for this machine
+alocal chat --auto --mock-hardware tests/fixtures/rtx4090.json
+alocal chat phi4-mini:latest --system "You are a concise coding assistant"
+alocal chat --ollama-url http://remote-host:11434 qwen3:0.6b
+```
+
+- If you omit the model and `--auto`, the first installed Ollama model is used.
+- `--auto` picks the best catalog model for your hardware, then **checks that it is pulled**. If not, it prints the exact `alocal pull <id>` / `ollama pull <tag>` command to run first.
+- Keys: `Enter` send, `Shift+Enter` newline, `Esc` stop generation, `Ctrl+C` / `Ctrl+D` quit.
+- Slash commands: `/help`, `/clear`, `/model <name>`, `/system <prompt>`, `/info`, `/models`, `/quit`.
+- Requires an interactive terminal; piping stdin/stdout is rejected with a clear error.
+- Errors use the same exit codes as other commands; chat needs Ollama reachable at `$OLLAMA_HOST` or `http://localhost:11434`.
 
 ### Reproducible demos without owning the hardware
 
 Every command accepts a mock profile, so the examples below can be reproduced on any machine:
 
 ```bash
-./llmfit scan      --mock-hardware tests/fixtures/rtx3060.json
-./llmfit recommend --mock-hardware tests/fixtures/rtx3060.json
+./alocal scan      --mock-hardware tests/fixtures/rtx3060.json
+./alocal recommend --mock-hardware tests/fixtures/rtx3060.json
 ```
 
 A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`).
@@ -51,13 +103,14 @@ A mock profile is flagged in both text (`MOCK PROFILE`) and JSON (`"mock": true`
 
 | Command | Purpose |
 |---|---|
-| `llmfit scan` | Detect CPU, RAM, GPU(s), disk, OS/container/WSL. Shows the Hardware Score breakdown. |
-| `llmfit score` | Print only the score (tab-separated in plain mode). `--verbose` shows components. |
-| `llmfit recommend` | Hard memory filter + nearest-model-score rule. Shows alternatives and reasons. |
-| `llmfit models` | Browse/filter the catalog (`--task`, `--family`, `--quant`, `--runtime`, `--min-context`, `--max-size`). |
-| `llmfit explain <id>` | Per-model fit: KV cache, overhead, required memory, score comparison, tok/s estimate. |
-| `llmfit pull <id>` | Run `ollama pull` for a catalog model after confirmation. Graceful when Ollama is missing. |
-| `llmfit catalog validate` | Recompute every model score from the schema and report mismatches. `--file` validates an external file. |
+| `alocal scan` | Detect CPU, RAM, GPU(s), disk, OS/container/WSL. Shows the Hardware Score breakdown. |
+| `alocal score` | Print only the score (tab-separated in plain mode). `--verbose` shows components. |
+| `alocal recommend` | Hard memory filter + nearest-model-score rule. Shows alternatives and reasons. |
+| `alocal models` | Browse/filter the catalog (`--task`, `--family`, `--quant`, `--runtime`, `--min-context`, `--max-size`). |
+| `alocal explain <id>` | Per-model fit: KV cache, overhead, required memory, score comparison, tok/s estimate. |
+| `alocal pull <id>` | Run `ollama pull` for a catalog model after confirmation. Graceful when Ollama is missing. |
+| `alocal chat [model]` | Interactive streaming chat TUI via Ollama. `--auto` selects the best model for this hardware. |
+| `alocal catalog validate` | Recompute every model score from the schema and report mismatches. `--file` validates an external file. |
 
 Global flags:
 
@@ -163,7 +216,7 @@ model_score    = 0.70 × memory_score + 0.30 × demand_score
 - Effective bits per weight: `Q3_K_M 3.90`, `Q4_K_M 4.85`, `Q5_K_M 5.70`, `Q6_K 6.60`, `Q8_0 8.50`, `FP16 16.0`.
 - The `demand_curve` is a 0–100 curve over active weight bytes.
 
-`llmfit catalog validate` recomputes every score. The shipped catalog is generated by `scripts/gen_models.go`, which calls the same scoring code and refuses to write inconsistent data.
+`alocal catalog validate` recomputes every score. The shipped catalog is generated by `scripts/gen_models.go`, which calls the same scoring code and refuses to write inconsistent data.
 
 ### Recommendation rule
 
@@ -194,8 +247,8 @@ Efficiency: discrete GPU 0.45, Apple GPU 0.42, CPU 0.30 × SIMD adjustment. Valu
 ### 1. RTX 3060 12 GB + Ryzen 7 5800X + 32 GB
 
 ```console
-$ llmfit scan --mock-hardware tests/fixtures/rtx3060.json
-llmfit hardware scan
+$ alocal scan --mock-hardware tests/fixtures/rtx3060.json
+alocal hardware scan
   MOCK PROFILE — values came from a JSON file, not this machine
 
 System
@@ -230,10 +283,10 @@ Disk
 Hardware score
   59.6 / 100  High  ·  effective memory 11.4 GB
 
-Next: llmfit recommend
+Next: alocal recommend
 
-$ llmfit recommend --mock-hardware tests/fixtures/rtx3060.json --top 3
-llmfit recommendation
+$ alocal recommend --mock-hardware tests/fixtures/rtx3060.json --top 3
+alocal recommendation
   Hardware: 59.6 / 100  High  ·  11.4 GB usable discrete VRAM
   Safe memory limit: 9.7 GB (15% reserve)
   Filters: context 8192
@@ -247,13 +300,13 @@ Granite 3.1 8B Instruct  Q5_K_M  8.2B    40.9 / 59.6  8.4 GB  yes   27.9 (18.2�
 Qwen3 8B                 Q5_K_M  8.2B    40.6 / 59.6  8.2 GB  yes   27.9 (18.2–37.7)
 ```
 
-The 12 GB card cannot hold a comfortable 14B at 8K context, so `llmfit` prefers a 9B at Q5 rather than a 14B at the edge of free VRAM.
+The 12 GB card cannot hold a comfortable 14B at 8K context, so `alocal` prefers a 9B at Q5 rather than a 14B at the edge of free VRAM.
 
 ### 2. MacBook Air M2, 8 GB unified memory
 
 ```console
-$ llmfit recommend --mock-hardware tests/fixtures/m2air8.json --top 3
-llmfit recommendation
+$ alocal recommend --mock-hardware tests/fixtures/m2air8.json --top 3
+alocal recommendation
   Hardware: 38.7 / 100  Mid  ·  5.6 GB usable unified memory
   Safe memory limit: 4.8 GB (15% reserve)
 
@@ -271,8 +324,8 @@ Only 70% of the 8 GB is treated as GPU-usable, so 4B-class models are the practi
 ### 3. CPU-only laptop, 16 GB RAM
 
 ```console
-$ llmfit recommend --mock-hardware tests/fixtures/cpu-only-16.json --top 3
-llmfit recommendation
+$ alocal recommend --mock-hardware tests/fixtures/cpu-only-16.json --top 3
+alocal recommendation
   Hardware: 42.8 / 100  Mid  ·  11.5 GB usable system RAM
   Safe memory limit: 9.8 GB (15% reserve)
 
@@ -347,7 +400,7 @@ After editing, regenerate or validate:
 
 ```bash
 go run ./scripts/gen_models.go     # regenerates models.json from base definitions
-./llmfit catalog validate          # recomputes scores and checks the schema
+./alocal catalog validate          # recomputes scores and checks the schema
 ```
 
 Validation checks unique IDs, lowercase slugs, known quantization/task/runtime labels, positive sizes, KV architecture fields, and that stored `model_score` matches the formula. CI fails on any mismatch.
@@ -376,29 +429,39 @@ The tool never claims a benchmark result. If a number is estimated, it says so n
 ## Development
 
 ```bash
-go test ./...          # unit + integration tests (scoring, catalog, matching, CLI)
+make check             # gofmt + vet + race tests
+make test              # go test ./...
+make race              # go test -race ./...
+make vet               # go vet ./...
+make cross             # six static binaries into dist/
+make smoke             # offline smoke tests using the fixtures
+
+# Or with Go directly:
+go test ./...          # unit + integration tests (scoring, catalog, matching, CLI, chat, Ollama)
 go vet ./...
 go test -race ./...
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/llmfit
-GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/llmfit
-GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/llmfit
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/alocal
+GOOS=darwin  GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/alocal
+GOOS=linux   GOARCH=arm64 CGO_ENABLED=0 go build ./cmd/alocal
 ```
 
 Layout:
 
 ```
-cmd/llmfit/          entry point, panic recovery
+cmd/alocal/          entry point, panic recovery
 internal/hardware/   detection per OS + mock loader + Detector interface
 internal/gpu/        embedded GPU table, vendor matching, RAM bandwidth
 internal/scoring/    curves, hardware score, model score, throughput
 internal/catalog/    schema, validation, filters, runtime tags
 internal/match/      hard memory filter + recommendation rule
 internal/cli/        cobra commands, text/JSON rendering
+internal/chat/       bubbletea chat TUI (streaming, Markdown, slash commands)
+internal/ollama/     streaming Ollama HTTP client
 data/                gpus.json, models.json, //go:embed
 tests/fixtures/      five reproducible machine profiles
 scripts/             catalog generator
 ```
 
-Mock profiles follow the same schema as `llmfit scan --json`; a profile needs a CPU model plus RAM or GPU data to normalize. Tests cover the five fixtures, score formulas, catalog integrity, CLI exit codes, and JSON contracts.
+Mock profiles follow the same schema as `alocal scan --json`; a profile needs a CPU model plus RAM or GPU data to normalize. Tests cover the five fixtures, score formulas, catalog integrity, CLI exit codes, and JSON contracts.
 
 CI (`.github/workflows/ci.yml`) runs formatting, vet, tests, and a build matrix for Linux/macOS/Windows on amd64 and arm64.

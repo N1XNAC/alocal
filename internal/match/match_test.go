@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"llmfit/internal/catalog"
-	"llmfit/internal/hardware"
+	"alocal/internal/catalog"
+	"alocal/internal/hardware"
 )
 
 func fixture(t *testing.T, name string) *hardware.Profile {

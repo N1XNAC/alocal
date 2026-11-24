@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"llmfit/data"
-	"llmfit/internal/scoring"
+	"alocal/data"
+	"alocal/internal/scoring"
 )
 
 // Arch holds the fields needed for a KV-cache estimate.

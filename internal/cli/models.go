@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"llmfit/internal/catalog"
+	"alocal/internal/catalog"
 )
 
 func newModelsCmd(app *App) *cobra.Command {
@@ -32,7 +32,7 @@ func newModelsCmd(app *App) *cobra.Command {
 				})
 			}
 			u := app.ui()
-			u.Title("llmfit model catalog")
+			u.Title("Alocal model catalog")
 			fmt.Fprintf(u.Out, "  %s\n\n", u.Dim(fmt.Sprintf("%d of %d entries · scores at %d-token context unless capped", len(models), len(cat.Models), cat.ScoreContext)))
 			if len(models) == 0 {
 				fmt.Fprintln(u.Out, u.Warn("  No models matched those filters."))

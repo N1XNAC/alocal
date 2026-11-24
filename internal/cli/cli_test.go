@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"llmfit/internal/catalog"
-	"llmfit/internal/match"
+	"alocal/internal/catalog"
+	"alocal/internal/match"
 )
 
 func run(t *testing.T, stdin string, args ...string) (string, string, error) {

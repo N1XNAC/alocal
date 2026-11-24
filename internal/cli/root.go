@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"llmfit/internal/catalog"
-	"llmfit/internal/hardware"
+	"alocal/internal/catalog"
+	"alocal/internal/hardware"
 )
 
 // Version is the CLI version.
@@ -76,9 +76,9 @@ func Execute() int {
 // NewRoot builds the command tree.
 func NewRoot(app *App) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "llmfit",
+		Use:           "alocal",
 		Short:         "Find the best local LLM this machine can run",
-		Long:          "llmfit scans your hardware, computes a transparent 0-100 Hardware Score, and recommends the best-fitting local model from an embedded catalog.",
+		Long:          "Alocal scans your hardware, computes a transparent 0-100 Hardware Score, and recommends the best-fitting local model from an embedded catalog.",
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -103,6 +103,7 @@ func NewRoot(app *App) *cobra.Command {
 		newExplainCmd(app),
 		newPullCmd(app),
 		newCatalogCmd(app),
+		newChatCmd(app),
 	)
 	return root
 }
@@ -112,7 +113,7 @@ func (a *App) printError(err error, code int) {
 		_ = a.writeJSON(map[string]any{"error": err.Error(), "exit_code": code})
 		return
 	}
-	fmt.Fprintf(a.Err, "llmfit: %s\n", err.Error())
+	fmt.Fprintf(a.Err, "alocal: %s\n", err.Error())
 }
 
 func (a *App) writeJSON(v any) error {
@@ -145,7 +146,7 @@ func (a *App) loadCatalog() (*catalog.Catalog, error) {
 		return nil, coded(1, "load embedded catalog: %v", err)
 	}
 	if errs := c.Validate(); len(errs) > 0 {
-		return nil, coded(1, "embedded catalog is invalid: %v (run `llmfit catalog validate`)", errs[0])
+		return nil, coded(1, "embedded catalog is invalid: %v (run `alocal catalog validate`)", errs[0])
 	}
 	a.catalog = c
 	return c, nil

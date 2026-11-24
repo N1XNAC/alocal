@@ -17,7 +17,7 @@ func newPullCmd(app *App) *cobra.Command {
 		Short: "Pull a catalog model with Ollama",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return coded(2, "pull requires exactly one model id (try `llmfit models`)")
+				return coded(2, "pull requires exactly one model id (try `alocal models`)")
 			}
 			return nil
 		},

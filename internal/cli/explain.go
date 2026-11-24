@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"llmfit/internal/catalog"
-	"llmfit/internal/match"
-	"llmfit/internal/scoring"
+	"alocal/internal/catalog"
+	"alocal/internal/match"
+	"alocal/internal/scoring"
 )
 
 type explainJSON struct {
@@ -32,7 +32,7 @@ func newExplainCmd(app *App) *cobra.Command {
 		Short: "Explain a model's fit and score on this machine",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
-				return coded(2, "explain requires exactly one model id (try `llmfit models`)")
+				return coded(2, "explain requires exactly one model id (try `alocal models`)")
 			}
 			return nil
 		},
@@ -92,13 +92,13 @@ func suggestionSuffix(cat *catalog.Catalog, id string) string {
 		}
 	}
 	if len(matches) == 0 {
-		return " (run `llmfit models` to list ids)"
+		return " (run `alocal models` to list ids)"
 	}
 	return ". Did you mean: " + strings.Join(matches, ", ")
 }
 
 func printExplain(u *UI, m catalog.Model, res match.Result, rec match.Recommendation) {
-	u.Title("llmfit explain")
+	u.Title("Alocal explain")
 	fmt.Fprintf(u.Out, "  %s  %s\n", u.Label(m.DisplayName), u.Dim(m.ID))
 	fmt.Fprintf(u.Out, "  %s · %s · release %d\n\n", m.Family, m.License, m.ReleaseYear)
 

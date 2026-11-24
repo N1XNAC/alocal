@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"llmfit/internal/catalog"
-	"llmfit/internal/scoring"
+	"alocal/internal/catalog"
+	"alocal/internal/scoring"
 )
 
 type baseModel struct {

@@ -1,6 +1,6 @@
 # Binaries
-/llmfit
-/llmfit.exe
+/alocal
+/alocal.exe
 /dist/
 
 # Go test/build artifacts

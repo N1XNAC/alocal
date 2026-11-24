@@ -3,7 +3,7 @@ package hardware
 import (
 	"strings"
 
-	"llmfit/internal/gpu"
+	"alocal/internal/gpu"
 )
 
 func hasVendorGPU(p *Profile, vendor string) bool {

@@ -3,8 +3,8 @@ package scoring
 import (
 	"fmt"
 
-	"llmfit/internal/gpu"
-	"llmfit/internal/hardware"
+	"alocal/internal/gpu"
+	"alocal/internal/hardware"
 )
 
 // ModelSpec is the subset of a catalog entry needed to score memory and

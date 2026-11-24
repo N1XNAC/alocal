@@ -8,7 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"llmfit/internal/scoring"
+	"alocal/internal/scoring"
 )
 
 // UI renders either styled terminal output or plain TTY-friendly text.

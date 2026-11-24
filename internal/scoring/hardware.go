@@ -5,8 +5,8 @@ import (
 	"math"
 	"strings"
 
-	"llmfit/internal/gpu"
-	"llmfit/internal/hardware"
+	"alocal/internal/gpu"
+	"alocal/internal/hardware"
 )
 
 // Component is one transparent part of a score.

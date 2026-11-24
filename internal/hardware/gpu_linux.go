@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"llmfit/internal/gpu"
+	"alocal/internal/gpu"
 )
 
 func (d SystemDetector) detectPlatformGPUs(ctx context.Context, p *Profile) {

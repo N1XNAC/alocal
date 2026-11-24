@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"llmfit/internal/scoring"
+	"alocal/internal/scoring"
 )
 
 func newScoreCmd(app *App) *cobra.Command {
@@ -31,7 +31,7 @@ func newScoreCmd(app *App) *cobra.Command {
 				}
 				return nil
 			}
-			u.Title("llmfit hardware score")
+			u.Title("Alocal hardware score")
 			fmt.Fprintf(u.Out, "  %s\n", u.Score(hw.Score, hw.Tier))
 			fmt.Fprintf(u.Out, "  Effective model memory: %s (%s)\n", fmtGB(hw.EffectiveMemoryGB), hw.MemoryKind)
 			fmt.Fprintf(u.Out, "  Bandwidth: %.0f GB/s · compute base: %.0f/100\n\n", hw.BandwidthGBps, hw.ComputeBase)

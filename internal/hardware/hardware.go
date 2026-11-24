@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"llmfit/internal/gpu"
+	"alocal/internal/gpu"
 )
 
 // Source records one raw detection source for --verbose.

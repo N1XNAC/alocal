@@ -1,4 +1,4 @@
-// Package data embeds the editable reference tables that ship with llmfit.
+// Package data embeds the editable reference tables that ship with Alocal.
 package data
 
 import _ "embed"

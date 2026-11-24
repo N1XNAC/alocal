@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"llmfit/internal/hardware"
-	"llmfit/internal/scoring"
+	"alocal/internal/hardware"
+	"alocal/internal/scoring"
 )
 
 type scanJSON struct {
@@ -40,7 +40,7 @@ func newScanCmd(app *App) *cobra.Command {
 }
 
 func printScan(u *UI, p *hardware.Profile, hw scoring.HardwareBreakdown, verbose bool) {
-	u.Title("llmfit hardware scan")
+	u.Title("Alocal hardware scan")
 	if p.Mock {
 		fmt.Fprintln(u.Out, u.Warn("  MOCK PROFILE — values came from a JSON file, not this machine"))
 	}
@@ -190,7 +190,7 @@ func printScan(u *UI, p *hardware.Profile, hw scoring.HardwareBreakdown, verbose
 		}
 	}
 	fmt.Fprintln(u.Out)
-	fmt.Fprintf(u.Out, "%s\n", u.Dim("Next: llmfit recommend"))
+	fmt.Fprintf(u.Out, "%s\n", u.Dim("Next: alocal recommend"))
 }
 
 func printScoreComponents(u *UI, hw scoring.HardwareBreakdown) {

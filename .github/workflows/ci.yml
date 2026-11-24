@@ -63,15 +63,15 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          out="dist/llmfit-${{ matrix.goos }}-${{ matrix.goarch }}"
+          out="dist/alocal-${{ matrix.goos }}-${{ matrix.goarch }}"
           if [ "${GOOS}" = "windows" ]; then out="${out}.exe"; fi
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "${out}" ./cmd/llmfit
+          go build -trimpath -ldflags="-s -w" -o "${out}" ./cmd/alocal
       - name: smoke test (host-compatible only)
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
-        run: ./dist/llmfit-linux-amd64 catalog validate
+        run: ./dist/alocal-linux-amd64 catalog validate
       - uses: actions/upload-artifact@v4
         with:
-          name: llmfit-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: alocal-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
           if-no-files-found: error
