@@ -16,8 +16,9 @@ import (
 	"alocal/internal/hardware"
 )
 
-// Version is the CLI version. Release builds override it with -ldflags.
-var Version = "0.1.0"
+// Version is the CLI version. Release builds and the Makefile override it
+// with -ldflags; "dev" is honest for an unversioned source build.
+var Version = "dev"
 
 // App carries I/O and global flags.
 type App struct {

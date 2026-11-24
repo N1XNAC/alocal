@@ -8,7 +8,12 @@ import _ "embed"
 //go:embed gpus.json
 var GPUsJSON []byte
 
-// ModelsJSON is the model catalog.
+// ModelsJSON is the model catalog used by scoring and recommendations.
 //
 //go:embed models.json
 var ModelsJSON []byte
+
+// DiscoveryJSON is the interactive catalogue's embedded repository snapshot.
+//
+//go:embed discovery.json
+var DiscoveryJSON []byte

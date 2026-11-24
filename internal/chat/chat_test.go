@@ -131,16 +131,30 @@ func TestLogoUsesBlockGlyphs(t *testing.T) {
 	}
 }
 
-func TestLogoIsGreyAWithWhiteLocal(t *testing.T) {
+func TestLogoIsPurpleHexagonWithPixelWordmark(t *testing.T) {
 	got := renderLogo(100)
-	if !strings.Contains(got, "▄") || !strings.Contains(got, "▀") {
-		t.Fatalf("grey block A missing from logo: %q", got)
+	if !strings.Contains(got, "▄▄███▄▄") || !strings.Contains(got, "▀▀███▀▀") {
+		t.Fatalf("pixel hexagon missing from logo: %q", got)
 	}
-	if !strings.Contains(got, "local") {
-		t.Fatalf("white local text missing from logo: %q", got)
+	if strings.Count(got, "─") != 1 {
+		t.Fatalf("wordmark must have exactly one trailing dash: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[38;5;141m") || strings.Contains(got, "\x1b[48;") {
+		t.Fatalf("logo must use purple foreground with no background: %q", got)
 	}
 	if strings.ContainsAny(got, "🤖🐙🚀") {
 		t.Fatal("logo must not use emoji")
+	}
+}
+
+func TestViewIncludesStartupStatus(t *testing.T) {
+	m := New(Config{Status: []string{"Alocal test", "Hardware  test machine", "Runtime   ready"}})
+	m.handleResize()
+	got := m.View()
+	for _, want := range []string{"Alocal test", "Hardware  test machine", "Runtime   ready"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("startup view missing %q: %q", want, got)
+		}
 	}
 }
 

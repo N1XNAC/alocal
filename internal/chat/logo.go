@@ -1,41 +1,12 @@
 package chat
 
-import (
-	"strings"
+import "alocal/internal/brand"
 
-	"github.com/charmbracelet/lipgloss"
-)
+// logoLines is kept as a small compatibility helper for tests and for the
+// fastfetch-style startup view. The real renderer lives in internal/brand so
+// the same wordmark can be reused by other commands.
+const logoLines = brand.HexagonA
 
-// A fastfetch/neofetch-style wordmark: a grey block-glyph "A" followed by
-// "local" in bright white. No images and no emoji.
-const logoLines = `  ▄▀▀▄
- █▀  ▀█
- █▀▀▀▀█
- ▀    ▀`
+func renderLogo(width int) string { return brand.Logo(true, width) }
 
-var (
-	logoBlock = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	logoText  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-)
-
-func renderLogo(width int) string {
-	lines := strings.Split(logoLines, "\n")
-	if len(lines) < 2 {
-		return logoLines
-	}
-	var b strings.Builder
-	for i, line := range lines {
-		b.WriteString(logoBlock.Render(line))
-		if i == 1 {
-			b.WriteString("  ")
-			b.WriteString(logoText.Render("local"))
-		}
-		if i < len(lines)-1 {
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
-}
-
-// logoPlain returns the unstyled wordmark for tests and non-TTY output.
-func logoPlain() string { return logoLines }
+func logoPlain() string { return brand.Logo(false, 0) }

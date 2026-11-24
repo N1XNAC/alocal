@@ -27,6 +27,23 @@ type ModelStore struct {
 	Models  []Model `json:"models"`
 }
 
+// ModelPath returns the safe on-disk destination for a repository file. The
+// repository and relative file path are flattened so nested GGUFs cannot
+// escape the model directory or overwrite unrelated files.
+func ModelPath(repo, file string) string {
+	clean := filepath.Clean(filepath.FromSlash(file))
+	if clean == "." || clean == ".." || clean == string(filepath.Separator) ||
+		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		clean = filepath.Base(file)
+	}
+	flat := strings.NewReplacer(string(filepath.Separator), "_", "/", "_").Replace(clean)
+	flat = strings.Trim(flat, "_")
+	if flat == "" {
+		flat = "model.gguf"
+	}
+	return filepath.Join(ModelsDir(), strings.ReplaceAll(repo, "/", "_"), flat)
+}
+
 // LoadModels returns the local registry, treating a missing file as empty.
 func LoadModels() (*ModelStore, error) {
 	path := ModelsFile()

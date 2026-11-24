@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -96,7 +95,7 @@ Examples:
 				file = hf.PickGGUF(files, wantQuant)
 			}
 
-			dest := filepath.Join(local.ModelsDir(), strings.ReplaceAll(repo, "/", "_"), filepath.Base(file))
+			dest := local.ModelPath(repo, file)
 			verb := cmd.Name()
 			if called := cmd.CalledAs(); called != "" {
 				verb = called

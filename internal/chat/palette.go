@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -370,7 +369,7 @@ func (m *Model) downloadCmd(repo, file string) tea.Cmd {
 	client := hf.New()
 	return func() tea.Msg {
 		ctx := context.Background()
-		dest := filepath.Join(local.ModelsDir(), strings.ReplaceAll(repo, "/", "_"), filepath.Base(file))
+		dest := local.ModelPath(repo, file)
 		err := client.Download(ctx, repo, file, dest, func(done, total int64) {
 			if m.program != nil {
 				m.program.Send(progressMsg{Done: done, Total: total})

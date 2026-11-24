@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
+	"alocal/internal/brand"
 	"alocal/internal/local"
 	"alocal/internal/runtime"
 )
@@ -65,6 +66,10 @@ type Config struct {
 	MockHardware  string
 	RuntimeBinary string
 	Settings      local.Settings
+	// Status is plain text shown below the wordmark. The CLI fills it with
+	// the real version, hardware and runtime state before the TUI starts.
+	Status  []string
+	NoColor bool
 }
 
 // Model is the bubbletea model for the chat TUI.
@@ -75,6 +80,8 @@ type Model struct {
 	mockHardware  string
 	runtimeBinary string
 	settings      local.Settings
+	status        []string
+	noColor       bool
 	width         int
 	height        int
 
@@ -132,6 +139,8 @@ func New(cfg Config) *Model {
 		mockHardware:  cfg.MockHardware,
 		runtimeBinary: cfg.RuntimeBinary,
 		settings:      settings,
+		status:        append([]string(nil), cfg.Status...),
+		noColor:       cfg.NoColor,
 		width:         100,
 		height:        30,
 		input:         ta,
@@ -346,9 +355,13 @@ func (m *Model) View() string {
 		return "\n  Preparing Alocal interface...\n"
 	}
 	var s strings.Builder
-	s.WriteString(renderLogo(m.width))
+	s.WriteString(brand.Logo(!m.noColor, m.width))
 	s.WriteString("\n")
-	s.WriteString(dimStyle.Render(fmt.Sprintf("  %s · llama.cpp · %d ctx", m.modelLabel, m.settings.Context)))
+	for _, line := range m.status {
+		s.WriteString(dimStyle.Render("  " + line))
+		s.WriteString("\n")
+	}
+	s.WriteString(dimStyle.Render(fmt.Sprintf("  Model     %s · llama.cpp · %d ctx", m.modelLabel, m.settings.Context)))
 	s.WriteString("\n\n")
 	if m.palette.open {
 		s.WriteString(m.renderPalette())
@@ -408,8 +421,13 @@ func (m *Model) cancelStream() {
 	m.updateViewport()
 }
 
+func (m *Model) headerHeight() int {
+	logo := brand.Logo(!m.noColor, m.width)
+	return strings.Count(logo, "\n") + 1 + len(m.status) + 2 // logo + version/hardware/runtime + model + blank
+}
+
 func (m *Model) handleResize() {
-	headerH := 6
+	headerH := m.headerHeight()
 	inputH := 5
 	statusH := 1
 	helpH := 1

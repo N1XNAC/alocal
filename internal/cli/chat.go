@@ -45,6 +45,10 @@ Examples:
 				MockHardware:  app.Mock,
 				RuntimeBinary: settings.RuntimePath,
 				Settings:      settings,
+				NoColor:       !app.Color,
+			}
+			if app.Color {
+				cfg.Status = app.startupStatus(cmd.Context())
 			}
 			if cfg.SystemPrompt == "" {
 				cfg.SystemPrompt = settings.SystemPrompt

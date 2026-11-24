@@ -1,7 +1,7 @@
 BINARY ?= alocal
 CMD := ./cmd/alocal
 GO ?= go
-VERSION ?= 0.1.0
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo dev)
 LDFLAGS := -s -w -X alocal/internal/cli.Version=$(VERSION)
 INSTALL_DIR ?= $(HOME)/.local/bin
 DIST := dist

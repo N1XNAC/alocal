@@ -43,11 +43,15 @@ func TestUpdateCheckAndDryRun(t *testing.T) {
 		t.Fatalf("check = %+v", check)
 	}
 
-	_, _, err = run(t, "", "update", "--base-url", base, "--tag", "v0.1.0")
+	currentTag := Version
+	if !strings.HasPrefix(currentTag, "v") {
+		currentTag = "v" + currentTag
+	}
+	_, _, err = run(t, "", "update", "--base-url", base, "--tag", currentTag)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, _, err = run(t, "", "update", "--base-url", base, "--tag", "v0.1.0", "--check")
+	out, _, err = run(t, "", "update", "--base-url", base, "--tag", currentTag, "--check")
 	if err != nil {
 		t.Fatal(err)
 	}
