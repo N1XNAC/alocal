@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,13 +21,26 @@ type Options struct {
 
 // Server owns a running llama-server process.
 type Server struct {
-	cmd     *exec.Cmd
-	baseURL string
-	stderr  bytes.Buffer
+	cmd      *exec.Cmd
+	baseURL  string
+	stderr   bytes.Buffer
+	mu       sync.Mutex
+	onOutput func(string)
 }
 
 // Start launches llama-server on a free local port and waits until it is healthy.
 func Start(ctx context.Context, binary, modelPath string, opts Options) (*Server, error) {
+	return StartWithProgress(ctx, binary, modelPath, opts, nil)
+}
+
+// StartWithProgress is Start with an optional status callback. Lines from
+// llama-server that indicate model-loading progress are forwarded to progress.
+func StartWithProgress(ctx context.Context, binary, modelPath string, opts Options, progress func(string)) (*Server, error) {
+	report := func(s string) {
+		if progress != nil {
+			progress(s)
+		}
+	}
 	port, err := freePort()
 	if err != nil {
 		return nil, err
@@ -38,21 +53,27 @@ func Start(ctx context.Context, binary, modelPath string, opts Options) (*Server
 		"-ngl", strconv.Itoa(opts.GPULayers),
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
-	srv := &Server{cmd: cmd, baseURL: "http://127.0.0.1:" + strconv.Itoa(port)}
-	cmd.Stdout = &srv.stderr
-	cmd.Stderr = &srv.stderr
+	srv := &Server{cmd: cmd, baseURL: "http://127.0.0.1:" + strconv.Itoa(port), onOutput: report}
+	cmd.Stdout = &writer{srv: srv}
+	cmd.Stderr = &writer{srv: srv}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
-	client := NewClient(srv.baseURL)
-	deadline := time.Now().Add(120 * time.Second)
+	timeout := 300 * time.Second
+	if raw := os.Getenv("ALOCAL_LOAD_TIMEOUT"); raw != "" {
+		if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+			timeout = time.Duration(secs) * time.Second
+		}
+	}
+	report("llama-server started; loading model into memory (first load can take a while)...")
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if err := client.Health(ctx); err == nil {
+		if err := NewClient(srv.baseURL).Health(ctx); err == nil {
 			return srv, nil
 		}
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-			return nil, fmt.Errorf("llama-server exited: %s", strings.TrimSpace(srv.stderr.String()))
+			return nil, fmt.Errorf("llama-server exited: %s", strings.TrimSpace(srv.logs()))
 		}
 		select {
 		case <-ctx.Done():
@@ -62,7 +83,50 @@ func Start(ctx context.Context, binary, modelPath string, opts Options) (*Server
 		}
 	}
 	_ = srv.Close()
-	return nil, fmt.Errorf("llama-server did not become ready: %s", strings.TrimSpace(srv.stderr.String()))
+	return nil, fmt.Errorf("llama-server did not become ready within %s: %s", timeout, strings.TrimSpace(srv.logs()))
+}
+
+// writer captures llama-server output and forwards meaningful lines to the
+// progress callback so the TUI can show real loading stages.
+type writer struct{ srv *Server }
+
+func (w *writer) Write(p []byte) (int, error) {
+	w.srv.mu.Lock()
+	w.srv.stderr.Write(p)
+	cb := w.srv.onOutput
+	w.srv.mu.Unlock()
+	if cb != nil {
+		for _, line := range strings.Split(string(p), "\n") {
+			line = strings.TrimSpace(line)
+			if interestingLine(line) {
+				cb(line)
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func interestingLine(line string) bool {
+	if line == "" {
+		return false
+	}
+	lower := strings.ToLower(line)
+	for _, needle := range []string{
+		"loading model", "load_tensors", "llama_model_load", "kv cache",
+		"offloaded", "compute buffer", "model buffer", "ready", "listening",
+		"error", "failed", "out of memory", "gguf",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) logs() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stderr.String()
 }
 
 // BaseURL is the HTTP endpoint of the running server.

@@ -102,6 +102,26 @@ func TestLoadingStatus(t *testing.T) {
 	}
 }
 
+func TestLoadProgressUpdatesStatus(t *testing.T) {
+	m := New(Config{ModelLabel: "local.gguf"})
+	m.loading = true
+	next, _ := m.Update(loadProgressMsg{Text: "Fetching bin-ubuntu-x64.tar.gz"})
+	got := next.(*Model).statusLine()
+	if !strings.Contains(got, "Fetching bin-ubuntu-x64.tar.gz") {
+		t.Fatalf("status did not show progress: %q", got)
+	}
+}
+
+func TestTruncateStatus(t *testing.T) {
+	if got := truncateStatus("  a   b  ", 20); got != "a b" {
+		t.Fatalf("truncate = %q", got)
+	}
+	got := truncateStatus("abcdefghij", 5)
+	if !strings.HasSuffix(got, "…") || len(got) >= len("abcdefghij") {
+		t.Fatalf("truncate long = %q", got)
+	}
+}
+
 func TestLogoUsesBlockGlyphs(t *testing.T) {
 	if !strings.Contains(logoLines, "▄") || !strings.Contains(logoLines, "▀") {
 		t.Fatal("Alocal wordmark must use terminal block glyphs")

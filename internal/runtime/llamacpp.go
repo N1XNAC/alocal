@@ -27,10 +27,24 @@ type releaseAsset struct {
 
 // Ensure locates or downloads a llama-server binary.
 func Ensure(ctx context.Context) (string, error) {
+	return EnsureWithProgress(ctx, nil)
+}
+
+// EnsureWithProgress is Ensure with an optional status callback. The callback
+// is called on the goroutine doing the work, so callers must send the message
+// through a safe channel (for example tea.Program.Send).
+func EnsureWithProgress(ctx context.Context, progress func(string)) (string, error) {
+	report := func(s string) {
+		if progress != nil {
+			progress(s)
+		}
+	}
 	if override := os.Getenv("ALOCAL_LLAMA_SERVER"); override != "" {
+		report("Using ALOCAL_LLAMA_SERVER override")
 		return override, nil
 	}
 	if path, err := exec.LookPath("llama-server"); err == nil {
+		report("Using llama-server from PATH")
 		return path, nil
 	}
 
@@ -40,10 +54,11 @@ func Ensure(ctx context.Context) (string, error) {
 	}
 	target := filepath.Join(local.RuntimeDir(), name)
 	if info, err := os.Stat(target); err == nil && info.Size() > 0 {
+		report("Using cached llama.cpp runtime")
 		return target, nil
 	}
 
-	fmt.Fprintln(os.Stderr, "Alocal: llama.cpp runtime not found; downloading it (once) from GitHub...")
+	report("llama.cpp runtime not found - downloading it once from GitHub...")
 	assets, err := fetchAssets(ctx)
 	if err != nil {
 		return "", fmt.Errorf("find llama.cpp release: %w", err)
@@ -52,13 +67,14 @@ func Ensure(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(os.Stderr, "Alocal: fetching %s\n", asset.Name)
+	report("Fetching " + asset.Name + " (this is a one-time download)")
 	if err := extractAsset(ctx, asset, target); err != nil {
 		return "", fmt.Errorf("install llama.cpp runtime: %w", err)
 	}
 	if err := os.Chmod(target, 0o755); err != nil {
 		return "", err
 	}
+	report("llama.cpp runtime installed")
 	return target, nil
 }
 

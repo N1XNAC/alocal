@@ -76,6 +76,24 @@ func TestExtractZipFindsServer(t *testing.T) {
 	}
 }
 
+func TestInterestingLoadingLines(t *testing.T) {
+	for _, line := range []string{
+		"llama_model_load: loading model from GGUF",
+		"llama_kv_cache_init: KV cache",
+		"offloaded 35/35 layers to GPU",
+		"main: server is listening",
+	} {
+		if !interestingLine(line) {
+			t.Errorf("expected interesting line: %q", line)
+		}
+	}
+	for _, line := range []string{"", "  ", "random noise", "GET /health 200"} {
+		if interestingLine(line) {
+			t.Errorf("unexpected interesting line: %q", line)
+		}
+	}
+}
+
 func TestExtractTarGzFindsServer(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "llama.tar.gz")

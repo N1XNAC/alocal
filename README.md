@@ -125,9 +125,12 @@ alocal chat bartowski/Qwen2.5-7B-Instruct-GGUF/model-Q5_K_M.gguf \
 | `~/.config/alocal/update.json` | Release source used by `alocal update`, written by the installers. |
 | `ALOCAL_DATA_DIR`, `ALOCAL_CONFIG_DIR` | Override the directories above. |
 | `ALOCAL_LLAMA_SERVER` | Use an existing `llama-server` binary instead of downloading one. |
+| `ALOCAL_LOAD_TIMEOUT` | Seconds to wait for model loading before giving up (default `300`). Large GGUFs on slow disks may need more. |
 | `HF_ENDPOINT`, `HF_TOKEN` | Hugging Face mirror and token for private or gated repositories. |
 
 No Ollama daemon is used. If `llama-server` is already on `PATH`, Alocal uses it; otherwise it fetches the matching static llama.cpp release for Linux/macOS/Windows on amd64 or arm64. Patch versions are pinned by the release asset it selects at first run.
+
+The first launch can take a while: Alocal downloads the llama.cpp runtime once, then `llama-server` loads the GGUF into memory. The status line shows each stage (download, extraction, tensor loading, KV cache, offload) so it is clear that loading is progressing. If you have a slow disk or a very large model, raise `ALOCAL_LOAD_TIMEOUT` (for example `ALOCAL_LOAD_TIMEOUT=900 alocal`).
 
 ### Reproducible demos without owning the hardware
 

@@ -47,6 +47,8 @@ type errMsg struct{ Err error }
 
 type infoMsg struct{ Text string }
 
+type loadProgressMsg struct{ Text string }
+
 type loadMsg struct {
 	Model  local.Model
 	Path   string
@@ -82,6 +84,7 @@ type Model struct {
 	spinner       spinner.Model
 	streaming     bool
 	loading       bool
+	loadingDetail string
 	initialCmd    tea.Cmd
 	streamBuf     string
 	cancelFunc    context.CancelFunc
@@ -259,6 +262,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewport()
 		return m, nil
 
+	case loadProgressMsg:
+		m.loadingDetail = msg.Text
+		return m, nil
+
 	case progressMsg:
 		m.progressDone, m.progressTotal = msg.Done, msg.Total
 		return m, nil
@@ -290,6 +297,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case loadMsg:
 		m.loading = false
+		m.loadingDetail = ""
 		if msg.Err != nil {
 			m.appendSystem("Model load failed: " + msg.Err.Error())
 		} else {
@@ -335,7 +343,7 @@ func (m *Model) View() string {
 		return "\n  Goodbye!\n\n"
 	}
 	if !m.ready {
-		return "\n  Initializing local runtime...\n"
+		return "\n  Preparing Alocal interface...\n"
 	}
 	var s strings.Builder
 	s.WriteString(renderLogo(m.width))
@@ -360,7 +368,11 @@ func (m *Model) View() string {
 
 func (m *Model) statusLine() string {
 	if m.loading {
-		return statusStyle.Render(fmt.Sprintf("%s Starting local llama.cpp runtime...", m.spinner.View()))
+		detail := m.loadingDetail
+		if detail == "" {
+			detail = "Starting local llama.cpp runtime..."
+		}
+		return statusStyle.Render(fmt.Sprintf("%s %s", m.spinner.View(), detail))
 	}
 	if m.progressTotal > 0 && m.progressDone < m.progressTotal {
 		pct := float64(m.progressDone) / float64(m.progressTotal) * 100
@@ -586,20 +598,34 @@ func (m *Model) startStream() tea.Cmd {
 
 func (m *Model) loadModelCmd(lm local.Model) tea.Cmd {
 	m.loading = true
+	m.loadingDetail = "Preparing local runtime..."
+	report := func(text string) {
+		if m.program != nil {
+			m.program.Send(loadProgressMsg{Text: truncateStatus(text, 90)})
+		}
+	}
 	return func() tea.Msg {
 		binary := m.runtimeBinary
 		if binary == "" {
 			var err error
-			binary, err = runtime.Ensure(context.Background())
+			binary, err = runtime.EnsureWithProgress(context.Background(), report)
 			if err != nil {
 				return loadMsg{Err: err, Model: lm}
 			}
 		}
-		srv, err := runtime.Start(context.Background(), binary, lm.Path, runtime.Options{
+		srv, err := runtime.StartWithProgress(context.Background(), binary, lm.Path, runtime.Options{
 			Context: m.settings.Context, GPULayers: m.settings.GPULayers,
-		})
+		}, report)
 		return loadMsg{Server: srv, Model: lm, Path: lm.Path, Label: lm.ID, Err: err}
 	}
+}
+
+func truncateStatus(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > max {
+		return s[:max-1] + "…"
+	}
+	return s
 }
 
 // Run starts the chat TUI with a local llama.cpp server.
