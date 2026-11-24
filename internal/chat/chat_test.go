@@ -80,10 +80,25 @@ func TestCtrlXOpensPalette(t *testing.T) {
 	}
 }
 
-func TestViewBeforeReady(t *testing.T) {
+func TestViewIsReadyImmediately(t *testing.T) {
 	m := New(Config{ModelLabel: "local.gguf"})
-	if got := m.View(); !strings.Contains(got, "Initializing") {
-		t.Fatalf("view = %q", got)
+	if !m.ready {
+		t.Fatal("model should be ready before the first resize message")
+	}
+	got := m.View()
+	if strings.Contains(got, "Initializing") {
+		t.Fatalf("view stuck on initializing screen: %q", got)
+	}
+	if !strings.Contains(got, "local.gguf") {
+		t.Fatalf("view missing model label: %q", got)
+	}
+}
+
+func TestLoadingStatus(t *testing.T) {
+	m := New(Config{ModelLabel: "local.gguf"})
+	m.loading = true
+	if got := m.statusLine(); !strings.Contains(got, "Starting local llama.cpp runtime") {
+		t.Fatalf("status = %q", got)
 	}
 }
 

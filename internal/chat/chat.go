@@ -81,6 +81,8 @@ type Model struct {
 	viewport      viewport.Model
 	spinner       spinner.Model
 	streaming     bool
+	loading       bool
+	initialCmd    tea.Cmd
 	streamBuf     string
 	cancelFunc    context.CancelFunc
 	streamStart   time.Time
@@ -118,7 +120,7 @@ func New(cfg Config) *Model {
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 
-	renderer, _ := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(80))
+	renderer, _ := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(80))
 
 	m := &Model{
 		modelPath:     cfg.ModelPath,
@@ -127,6 +129,8 @@ func New(cfg Config) *Model {
 		mockHardware:  cfg.MockHardware,
 		runtimeBinary: cfg.RuntimeBinary,
 		settings:      settings,
+		width:         100,
+		height:        30,
 		input:         ta,
 		spinner:       sp,
 		renderer:      renderer,
@@ -135,6 +139,10 @@ func New(cfg Config) *Model {
 	if m.modelLabel == "" {
 		m.modelLabel = "no model loaded"
 	}
+	// Initialize the viewport immediately. Waiting for the first terminal
+	// resize message could otherwise leave the UI showing "Initializing..."
+	// forever in embedders that do not report size right away.
+	m.handleResize()
 	return m
 }
 
@@ -143,7 +151,11 @@ func (m *Model) SetProgram(p *tea.Program) { m.program = p }
 
 // Init implements tea.Model.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, m.spinner.Tick)
+	cmds := []tea.Cmd{textarea.Blink, m.spinner.Tick}
+	if m.initialCmd != nil {
+		cmds = append(cmds, m.initialCmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -277,6 +289,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case loadMsg:
+		m.loading = false
 		if msg.Err != nil {
 			m.appendSystem("Model load failed: " + msg.Err.Error())
 		} else {
@@ -346,6 +359,9 @@ func (m *Model) View() string {
 }
 
 func (m *Model) statusLine() string {
+	if m.loading {
+		return statusStyle.Render(fmt.Sprintf("%s Starting local llama.cpp runtime...", m.spinner.View()))
+	}
 	if m.progressTotal > 0 && m.progressDone < m.progressTotal {
 		pct := float64(m.progressDone) / float64(m.progressTotal) * 100
 		return statusStyle.Render(fmt.Sprintf("Downloading GGUF %.1f%% (%.1f / %.1f GB)", pct,
@@ -403,7 +419,7 @@ func (m *Model) handleResize() {
 	}
 	m.input.SetWidth(vpW - 2)
 	if m.width > 10 {
-		m.renderer, _ = glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(m.width-6))
+		m.renderer, _ = glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(m.width-6))
 	}
 	m.updateViewport()
 }
@@ -569,6 +585,7 @@ func (m *Model) startStream() tea.Cmd {
 }
 
 func (m *Model) loadModelCmd(lm local.Model) tea.Cmd {
+	m.loading = true
 	return func() tea.Msg {
 		binary := m.runtimeBinary
 		if binary == "" {
@@ -592,30 +609,22 @@ func Run(cfg Config) error {
 	}
 	model := New(cfg)
 
-	// Starting with no model is intentional: the Ctrl+X palette can download a
-	// GGUF from Hugging Face and load it without restarting Alocal.
+	// Show the UI immediately, then load the model in the background. This
+	// avoids a long silent wait while llama.cpp is downloaded or a large GGUF
+	// is loaded, and lets Ctrl+X stay usable during that time.
 	if cfg.ModelPath != "" {
-		binary := cfg.RuntimeBinary
-		if binary == "" {
-			var err error
-			binary, err = runtime.Ensure(context.Background())
-			if err != nil {
-				return err
-			}
-		}
-		srv, err := runtime.Start(context.Background(), binary, cfg.ModelPath, runtime.Options{
-			Context: cfg.Settings.Context, GPULayers: cfg.Settings.GPULayers,
+		model.initialCmd = model.loadModelCmd(local.Model{
+			ID:    cfg.ModelLabel,
+			Path:  cfg.ModelPath,
+			Quant: guessQuant(cfg.ModelPath),
 		})
-		if err != nil {
-			return err
-		}
-		defer srv.Close()
-		model.server = srv
-		model.client = runtime.NewClient(srv.BaseURL())
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	model.SetProgram(p)
 	_, err := p.Run()
+	if model.server != nil {
+		_ = model.server.Close()
+	}
 	return err
 }
