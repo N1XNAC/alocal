@@ -142,9 +142,30 @@ func orDefault(v, fallback string) string {
 }
 
 // handlePaletteKey processes input while the Ctrl+X palette is open.
-// It returns a command and whether the key was consumed.
+// It returns a command and whether the key was consumed. Returning false lets
+// the main Update handler see the key (needed for Ctrl+C to keep working).
 func (m *Model) handlePaletteKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	p := &m.palette
+
+	// Text-entry modes must route keys to the text input first. Otherwise
+	// navigation shortcuts like j/k/a/d would be swallowed before the user
+	// can type them into a repo name, model id or settings value.
+	if p.textMode() {
+		switch msg.String() {
+		case "ctrl+x", "esc":
+			p.setMenu()
+			return nil, true
+		case "enter":
+			return m.paletteEnter()
+		case "ctrl+c", "ctrl+d":
+			return nil, false
+		}
+		var cmd tea.Cmd
+		p.input, cmd = p.input.Update(msg)
+		return cmd, true
+	}
+
+	// Menu and list modes.
 	switch msg.String() {
 	case "ctrl+x", "esc":
 		if p.mode != "menu" {
@@ -162,12 +183,7 @@ func (m *Model) handlePaletteKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "enter":
 		return m.paletteEnter()
 	case "backspace":
-		if p.textMode() {
-			value := p.input.Value()
-			if len(value) > 0 {
-				p.input.SetValue(value[:len(value)-1])
-			}
-		} else if len(p.filter) > 0 {
+		if len(p.filter) > 0 {
 			p.filter = p.filter[:len(p.filter)-1]
 			p.selected = 0
 		}
@@ -183,11 +199,8 @@ func (m *Model) handlePaletteKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		if p.mode == "mcp" {
 			return m.mcpDelete(), true
 		}
-	}
-	if p.textMode() {
-		var cmd tea.Cmd
-		p.input, cmd = p.input.Update(msg)
-		return cmd, true
+	case "ctrl+c", "ctrl+d":
+		return nil, false
 	}
 	if len(msg.Runes) > 0 {
 		p.filter += string(msg.Runes)
@@ -462,12 +475,50 @@ func (m *Model) detectHardware() (*hardware.Profile, error) {
 
 var paletteBox = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("205")).
+	BorderForeground(lipgloss.Color("240")).
 	Padding(0, 1)
+
+var (
+	paletteTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	paletteDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+)
+
+func paletteTitleFor(mode string) string {
+	titles := map[string]string{
+		"menu":     "ALOCAL COMMANDS",
+		"switch":   "SWITCH MODEL",
+		"repo":     "DOWNLOAD GGUF",
+		"file":     "SELECT GGUF FILE",
+		"explain":  "EXPLAIN MODEL",
+		"mcp":      "MCP SERVERS",
+		"mcp-add":  "ADD MCP SERVER",
+		"settings": "SETTINGS",
+	}
+	if title, ok := titles[mode]; ok {
+		return title
+	}
+	return "ALOCAL"
+}
+
+// paletteHelp returns mode-aware key hints shown under the palette.
+func (m *Model) paletteHelp() string {
+	switch m.palette.mode {
+	case "repo", "explain", "settings", "mcp-add":
+		return "Type value · Enter submit · Esc back"
+	case "mcp":
+		return "↑↓ navigate · A add · D delete · Esc back"
+	case "file", "switch":
+		return "↑↓ navigate · Enter select · Esc back"
+	default:
+		return "↑↓ navigate · type to filter · Enter select · Esc back"
+	}
+}
 
 func (m *Model) renderPalette() string {
 	p := &m.palette
-	lines := []string{lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("ALOCAL COMMANDS") + "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("Ctrl+X / Esc to close")}
+	lines := []string{
+		paletteTitle.Render(paletteTitleFor(p.mode)) + "  " + paletteDim.Render("Ctrl+X / Esc to close"),
+	}
 	items := p.visible()
 	switch p.mode {
 	case "repo", "explain", "settings", "mcp-add":
@@ -475,11 +526,11 @@ func (m *Model) renderPalette() string {
 			"repo":     "Hugging Face repo (owner/name):",
 			"explain":  "Model id:",
 			"settings": "context gpu_layers temperature:",
-			"mcp-add":  "name command [args...]:",
+			"mcp-add":  "Name command [args...]:",
 		}[p.mode]
-		lines = append(lines, label, p.input.View())
+		lines = append(lines, paletteDim.Render(label), p.input.View())
 	case "file":
-		lines = append(lines, "Files in "+p.repo+":")
+		lines = append(lines, paletteDim.Render("Files in "+p.repo+":"))
 		for i, item := range items {
 			lines = append(lines, renderPaletteItem(item, i == p.selected))
 		}
@@ -489,14 +540,18 @@ func (m *Model) renderPalette() string {
 		}
 	}
 	if len(items) == 0 && !p.textMode() {
-		lines = append(lines, dimStyle.Render("(no entries)"))
+		lines = append(lines, paletteDim.Render("(no entries)"))
 	}
-	return paletteBox.Width(m.width - 4).Render(strings.Join(lines, "\n"))
+	width := m.width - 4
+	if width < 32 {
+		width = 32
+	}
+	return paletteBox.Width(width).Render(strings.Join(lines, "\n"))
 }
 
 func renderPaletteItem(item string, selected bool) string {
 	if selected {
-		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("▸ " + item)
+		return paletteTitle.Render("▸ " + item)
 	}
-	return "  " + item
+	return paletteDim.Render("  " + item)
 }

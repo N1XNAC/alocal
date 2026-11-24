@@ -110,3 +110,40 @@ func TestLogoUsesBlockGlyphs(t *testing.T) {
 		t.Fatal("wordmark must not use emoji")
 	}
 }
+
+func TestLogoIsGreyAWithWhiteLocal(t *testing.T) {
+	got := renderLogo(100)
+	if !strings.Contains(got, "▄") || !strings.Contains(got, "▀") {
+		t.Fatalf("grey block A missing from logo: %q", got)
+	}
+	if !strings.Contains(got, "local") {
+		t.Fatalf("white local text missing from logo: %q", got)
+	}
+	if strings.ContainsAny(got, "🤖🐙🚀") {
+		t.Fatal("logo must not use emoji")
+	}
+}
+
+func TestPaletteTextModeAcceptsNavigationLetters(t *testing.T) {
+	m := New(Config{})
+	m.palette.setItems("repo", nil)
+	m.palette.input.Focus()
+	m.palette.open = true
+	for _, r := range "hf:jk" {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	if got := m.palette.input.Value(); got != "hf:jk" {
+		t.Fatalf("j/k were swallowed as navigation, input = %q", got)
+	}
+}
+
+func TestPaletteHelpDependsOnMode(t *testing.T) {
+	m := New(Config{})
+	if got := m.paletteHelp(); !strings.Contains(got, "filter") {
+		t.Fatalf("menu help = %q", got)
+	}
+	m.palette.mode = "repo"
+	if got := m.paletteHelp(); !strings.Contains(got, "submit") {
+		t.Fatalf("text-mode help = %q", got)
+	}
+}

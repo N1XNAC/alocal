@@ -345,7 +345,7 @@ func (m *Model) View() string {
 	if m.palette.open {
 		s.WriteString(m.renderPalette())
 		s.WriteString("\n")
-		s.WriteString(helpStyle.Render("↑↓ navigate · Enter select · Esc back"))
+		s.WriteString(helpStyle.Render(m.paletteHelp()))
 		return appStyle.Render(s.String())
 	}
 	s.WriteString(m.viewport.View())

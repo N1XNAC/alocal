@@ -6,28 +6,36 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// A neofetch/fastfetch-style wordmark drawn with terminal block glyphs.
-// No images and no emoji.
-const logoLines = `  ▄▀▀ █▀▀ █▀▀ ▀█▀ █▀█ █▀▀
-  █▀  ██▀ █▀▀  █  █ █ ██▀
-   ▀▀▀ ▀▀▀ ▀▀▀  ▀  ▀▀▀ ▀▀▀`
+// A fastfetch/neofetch-style wordmark: a grey block-glyph "A" followed by
+// "local" in bright white. No images and no emoji.
+const logoLines = `  ▄▀▀▄
+ █▀  ▀█
+ █▀▀▀▀█
+ ▀    ▀`
 
 var (
-	logoA = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	logoB = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
-	logoC = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("75"))
+	logoBlock = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	logoText  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 )
 
 func renderLogo(width int) string {
 	lines := strings.Split(logoLines, "\n")
-	if len(lines) != 3 {
+	if len(lines) < 2 {
 		return logoLines
 	}
 	var b strings.Builder
-	b.WriteString(logoA.Render(lines[0]))
-	b.WriteString("\n")
-	b.WriteString(logoB.Render(lines[1]))
-	b.WriteString("\n")
-	b.WriteString(logoC.Render(lines[2]))
+	for i, line := range lines {
+		b.WriteString(logoBlock.Render(line))
+		if i == 1 {
+			b.WriteString("  ")
+			b.WriteString(logoText.Render("local"))
+		}
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
+
+// logoPlain returns the unstyled wordmark for tests and non-TTY output.
+func logoPlain() string { return logoLines }
