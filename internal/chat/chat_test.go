@@ -72,7 +72,7 @@ func TestCtrlXOpensPalette(t *testing.T) {
 	if !m.palette.open {
 		t.Fatal("Ctrl+X did not open the palette")
 	}
-	if len(m.palette.items) == 0 || m.palette.items[0] != "Switch model" {
+	if len(m.palette.items) == 0 || m.palette.items[0] != "Browse models" {
 		t.Fatalf("unexpected palette: %+v", m.palette.items)
 	}
 	if !strings.Contains(m.View(), "Commands") {

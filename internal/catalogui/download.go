@@ -232,6 +232,9 @@ func (m *Model) onDownloadDone(v downloadDoneMsg) {
 	}
 	m.detail = true
 	m.showRequirements = true
+	m.lastDownloadRepo = v.model.Repo
+	m.lastDownloadFile = v.model.File
+	m.hasNewDownload = true
 	m.status = "Downloaded " + v.model.ID + ". Run it with: alocal chat " + v.model.ID
 }
 

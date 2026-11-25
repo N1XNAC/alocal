@@ -90,6 +90,12 @@ type Model struct {
 
 	// hits are the clickable regions from the most recently rendered frame.
 	hits []hitBox
+
+	// lastDownload tracks the most recently completed download so embedders
+	// (such as the chat TUI) can react to it.
+	lastDownloadRepo  string
+	lastDownloadFile  string
+	hasNewDownload    bool
 }
 
 var (
@@ -167,9 +173,22 @@ func Run(opts Options) error {
 // SetProgram lets download commands stream progress back into the UI.
 func (m *Model) SetProgram(p *tea.Program) { m.program = p }
 
-// IsTerminal reports whether the catalogue can use a full-screen UI. Both
+// HasNewDownload reports whether a download completed since the last clear.
+func (m *Model) HasNewDownload() bool { return m.hasNewDownload }
+
+// LastDownload returns the repo and file of the most recent download.
+func (m *Model) LastDownload() (string, string) { return m.lastDownloadRepo, m.lastDownloadFile }
+
+// ClearDownload acknowledges the download so it is not processed twice.
+func (m *Model) ClearDownload() { m.hasNewDownload = false }
 // streams must be terminals: Bubble Tea reads keys from stdin and draws to
 // stdout.
+// SetSearch sets the catalogue search query and applies it.
+func (m *Model) SetSearch(query string) {
+	m.search.SetValue(query)
+	m.applyFilter()
+}
+
 func IsTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }

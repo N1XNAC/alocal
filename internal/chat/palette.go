@@ -59,7 +59,7 @@ func newPalette() paletteState {
 
 func menuItems() []string {
 	return []string{
-		"Switch model",
+		"Browse models",
 		"Download GGUF from Hugging Face",
 		"Scan hardware",
 		"Recommend a model",
@@ -227,9 +227,10 @@ func (m *Model) paletteEnter() (tea.Cmd, bool) {
 		action := visible[p.selected]
 		p.open = false
 		switch action {
-		case "Switch model":
-			p.setItems("switch", localModelLabels())
-			p.open = true
+		case "Browse models":
+			p.open = false
+			m.openCatalogue("")
+			return nil, true
 		case "Download GGUF from Hugging Face":
 			p.setItems("repo", nil)
 			p.input.Reset()

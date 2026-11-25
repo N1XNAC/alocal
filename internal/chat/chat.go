@@ -6,9 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
+
+	"os"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -16,10 +17,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+
 	"golang.org/x/term"
 
 	"alocal/internal/brand"
+	"alocal/internal/catalog"
+	"alocal/internal/catalogui"
+	"alocal/internal/discovery"
+	"alocal/internal/hardware"
+	"alocal/internal/hf"
 	"alocal/internal/local"
+	"alocal/internal/match"
 	"alocal/internal/runtime"
 )
 
@@ -43,9 +51,8 @@ type tokenMsg struct {
 	Tokens int
 }
 
-type errMsg struct{ Err error }
-
 type infoMsg struct{ Text string }
+type errMsg struct{ Err error }
 
 type loadProgressMsg struct{ Text string }
 
@@ -55,6 +62,13 @@ type loadMsg struct {
 	Label  string
 	Err    error
 	Server *runtime.Server
+}
+
+type recommendMsg struct {
+	Text string
+	Repo string
+	File string
+	Err  error
 }
 
 // Config controls a chat session.
@@ -69,6 +83,7 @@ type Config struct {
 	// the real version, hardware and runtime state before the TUI starts.
 	Status  []string
 	NoColor bool
+	Profile *hardware.Profile
 }
 
 // Model is the bubbletea model for the chat TUI.
@@ -83,6 +98,8 @@ type Model struct {
 	noColor       bool
 	width         int
 	height        int
+
+	profile       *hardware.Profile
 
 	messages      []chatMessage
 	input         textarea.Model
@@ -111,6 +128,16 @@ type Model struct {
 	// paletteTop is the zero-based screen line where the palette box starts.
 	// View updates it so mouse coordinates can be resolved without guessing.
 	paletteTop int
+
+	// catalogue is the embedded model browser, opened from the Ctrl+X palette.
+	catalogue     *catalogui.Model
+	catalogueOpen bool
+
+	// recommendation is shown on first boot when no model is downloaded.
+	recommendation     string
+	recommendationOpen bool
+	recommendationRepo string
+	recommendationFile string
 }
 
 // New creates a chat TUI model.
@@ -159,6 +186,7 @@ func New(cfg Config) *Model {
 		spinner:       sp,
 		renderer:      renderer,
 		palette:       newPalette(),
+		profile:       cfg.Profile,
 	}
 	if m.modelLabel == "" {
 		m.modelLabel = "no model loaded"
@@ -179,12 +207,60 @@ func (m *Model) Init() tea.Cmd {
 	if m.initialCmd != nil {
 		cmds = append(cmds, m.initialCmd)
 	}
+	if m.modelPath == "" && m.profile != nil {
+		cmds = append(cmds, m.recommendCmd())
+	}
 	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	// Delegate to the embedded catalogue when it is open.
+	if m.catalogueOpen && m.catalogue != nil {
+		if km, ok := msg.(tea.KeyMsg); ok {
+			if km.String() == "q" || km.String() == "ctrl+c" {
+				m.catalogueOpen = false
+				return m, nil
+			}
+		}
+		newM, cmd := m.catalogue.Update(msg)
+		if cm, ok := newM.(*catalogui.Model); ok {
+			m.catalogue = cm
+		}
+		// If a download just completed, load the model into chat.
+		if m.catalogue != nil && m.catalogue.HasNewDownload() {
+			repo, file := m.catalogue.LastDownload()
+			m.catalogue.ClearDownload()
+			if repo != "" && file != "" {
+				id := repo + "/" + file
+				store, _ := local.LoadModels()
+				if lm, ok := store.Find(id); ok {
+					m.appendSystem(fmt.Sprintf("Loading %s ...", lm.ID))
+					m.catalogueOpen = false
+					return m, m.loadModelCmd(lm)
+				}
+			}
+		}
+		return m, cmd
+	}
+
+	// Recommendation modal.
+	if m.recommendationOpen {
+		if km, ok := msg.(tea.KeyMsg); ok {
+			switch km.String() {
+			case "d", "enter":
+				m.recommendationOpen = false
+				m.openCatalogue(m.recommendationRepo)
+				return m, nil
+			case "esc", "q", "ctrl+c":
+				m.recommendationOpen = false
+				return m, nil
+			}
+		}
+		return m, nil
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -284,8 +360,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateViewport()
 		return m, nil
 
-	case infoMsg:
-		m.appendSystem(msg.Text)
+	case recommendMsg:
+		if msg.Err == nil && msg.Text != "" {
+			m.recommendation = msg.Text
+			m.recommendationRepo = msg.Repo
+			m.recommendationOpen = true
+		}
+		return m, nil
 		m.updateViewport()
 		return m, nil
 
@@ -373,9 +454,19 @@ func (m *Model) View() string {
 	if !m.ready {
 		return "\n  Preparing Alocal…\n"
 	}
+	if m.catalogueOpen && m.catalogue != nil {
+		return m.catalogue.View()
+	}
 	var s strings.Builder
 	s.WriteString(m.renderHeader())
 	s.WriteString("\n\n")
+	if m.recommendationOpen {
+		s.WriteString(m.renderRecommendation())
+		s.WriteString("\n\n")
+		s.WriteString("  ")
+		s.WriteString(m.hintLine([2]string{"d", "download"}, [2]string{"Esc", "dismiss"}))
+		return appStyle.Render(s.String())
+	}
 	if m.palette.open {
 		m.paletteTop = m.headerHeight() + 1
 		s.WriteString(m.renderPalette())
@@ -488,6 +579,14 @@ func (m *Model) progressBar(pct float64) string {
 	}
 	return m.st(accentStyle, strings.Repeat("━", filled)) +
 		m.st(ruleStyle, strings.Repeat("━", width-filled))
+}
+
+func (m *Model) renderRecommendation() string {
+	var b strings.Builder
+	b.WriteString("  " + m.st(titleStyle, "Recommended for this machine") + "\n\n")
+	b.WriteString("  " + m.st(textStyle, m.recommendation) + "\n\n")
+	b.WriteString("  " + m.st(mutedStyle, "Press d to open the catalogue and download it, or Esc to dismiss.") + "\n")
+	return b.String()
 }
 
 func (m *Model) appendSystem(text string) {
@@ -730,6 +829,29 @@ func (m *Model) handleSlash(input string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) recommendCmd() tea.Cmd {
+	if m.profile == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		cat, err := catalog.Load()
+		if err != nil {
+			return recommendMsg{Err: err}
+		}
+		res := match.Recommend(m.profile, cat, match.Options{Top: 1, Context: m.settings.Context})
+		if len(res.Recommendations) == 0 {
+			return recommendMsg{Text: "No model fits this machine. " + res.Message, Err: fmt.Errorf("no fit")}
+		}
+		r := res.Recommendations[0]
+		repo := r.Model.Runtimes.LlamaCpp
+		if repo == "" {
+			repo = r.Model.ID
+		}
+		text := fmt.Sprintf("%s  (~%.1f GB, score %.1f)", r.Model.DisplayName, r.Need.RequiredGB, r.Need.Score)
+		return recommendMsg{Text: text, Repo: repo}
+	}
+}
+
 func (m *Model) startStream() tea.Cmd {
 	if m.client == nil {
 		return func() tea.Msg { return errMsg{Err: errors.New("no local model is loaded")} }
@@ -788,11 +910,43 @@ func (m *Model) loadModelCmd(lm local.Model) tea.Cmd {
 				return loadMsg{Err: err, Model: lm}
 			}
 		}
+
 		srv, err := runtime.StartWithProgress(context.Background(), binary, lm.Path, runtime.Options{
 			Context: m.settings.Context, GPULayers: m.settings.GPULayers,
 		}, report)
 		return loadMsg{Server: srv, Model: lm, Path: lm.Path, Label: lm.ID, Err: err}
 	}
+}
+
+
+func (m *Model) openCatalogue(searchHint string) {
+	embedded, err := discovery.Load()
+	if err != nil {
+		m.appendSystem("Catalogue load failed: " + err.Error())
+		return
+	}
+	store, _ := local.LoadModels()
+	entries := discovery.Merge(embedded.Models, discovery.LocalEntries(store))
+	profile := m.profile
+	if profile == nil {
+		p, _ := m.detectHardware()
+		profile = p
+	}
+	m.catalogue = catalogui.New(catalogui.Options{
+		Entries:      entries,
+		Profile:      profile,
+		Client:       hf.New(),
+		Version:      "dev",
+		Color:        !m.noColor,
+		FetchDynamic: true,
+	})
+	if m.program != nil {
+		m.catalogue.SetProgram(m.program)
+	}
+	if searchHint != "" {
+		m.catalogue.SetSearch(searchHint)
+	}
+	m.catalogueOpen = true
 }
 
 func truncateStatus(s string, max int) string {
@@ -809,8 +963,6 @@ func truncateStatus(s string, max int) string {
 	}
 	return string(runes[:max-1]) + "…"
 }
-
-// Run starts the chat TUI with a local llama.cpp server.
 func Run(cfg Config) error {
 	if !term.IsTerminal(int(os.Stdout.Fd())) {
 		return errors.New("chat requires an interactive terminal (TTY); run it directly in your terminal, not through a pipe")

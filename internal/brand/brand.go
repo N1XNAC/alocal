@@ -17,8 +17,8 @@ const (
 	Lavender = "183" // secondary accent: headings, active labels
 	Pale     = "225" // highlight: the top facet of the mark
 	White    = "15"  // primary text on the terminal's own background
-	Muted    = "245" // secondary text
-	Faint    = "242" // tertiary text, metadata
+	Muted    = "250" // secondary text (brighter for dark terminals)
+	Faint    = "248" // tertiary text, metadata
 	Rule     = "238" // hairlines and quiet separators
 	Success  = "114" // ready, verified, complete
 	Warning  = "179" // caution, partial fit
