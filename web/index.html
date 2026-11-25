@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alocal — Local AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- Sidebar -->
+  <nav class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">&#9728;</div>
+      <div class="name">Alocal</div>
+      <div class="tag">Local AI</div>
+    </div>
+    <div class="nav-item active" data-section="models" id="nav-models">
+      <span class="icon">&#128211;</span>
+      <span class="label">Models</span>
+    </div>
+    <div class="nav-item" data-section="chat" id="nav-chat">
+      <span class="icon">&#128172;</span>
+      <span class="label">Chat</span>
+    </div>
+    <div class="nav-item" data-section="hardware" id="nav-hardware">
+      <span class="icon">&#128214;</span>
+      <span class="label">Hardware</span>
+    </div>
+    <div class="nav-item" data-section="settings" id="nav-settings">
+      <span class="icon">&#128274;</span>
+      <span class="label">Settings</span>
+    </div>
+    <div class="nav-footer">
+      <div class="status-indicator" id="status-indicator">
+        <span class="dot"></span>
+        <span id="status-text">Checking hardware…</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main class="main">
+    <!-- Header -->
+    <header class="header">
+      <h1 id="page-title">Models</h1>
+      <div class="header-actions">
+        <button class="btn btn-primary" onclick="app.openRecommendation()">Scan & Recommend</button>
+      </div>
+    </header>
+
+    <!-- Models section -->
+    <section id="section-models" class="section active">
+      <div class="toolbar">
+        <input type="text" id="model-search" placeholder="Search models, publishers, tasks…" class="search-input">
+        <select id="category-filter" class="select-input">
+          <option value="all">All Models</option>
+        </select>
+        <button class="btn btn-secondary" onclick="app.refreshModels()">Refresh</button>
+      </div>
+      <div class="model-grid" id="model-grid">
+        <!-- Model cards injected here -->
+      </div>
+      <div id="empty-state" class="empty-state" style="display:none">
+        <div class="empty-icon">&#128171;</div>
+        <h3>No models found</h3>
+        <p>Try clearing the search or selecting a different category.</p>
+      </div>
+    </section>
+
+    <!-- Chat section -->
+    <section id="section-chat" class="section" style="display:none">
+      <div class="chat-container">
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg msg-system" id="welcome-msg">
+            <div class="msg-content">
+              <strong>Alocal</strong><br>
+              No model loaded. Go to <strong>Models</strong> to download one, then return here to chat.
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <select id="chat-model-select" class="select-input">
+            <option value="">Select a model…</option>
+          </select>
+          <textarea id="chat-input" placeholder="Type a message…" rows="1"></textarea>
+          <button class="btn btn-primary" id="chat-send" onclick="app.chatSend()">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Hardware section -->
+    <section id="section-hardware" class="section" style="display:none">
+      <div class="hardware-card">
+        <h2>Hardware Profile</h2>
+        <div id="hardware-data">
+          <div class="hw-row"><span class="hw-label">Status:</span> <span id="hw-status">Scanning…</span></div>
+        </div>
+      </div>
+      <div class="recommendation-card" id="recommendation-card" style="display:none">
+        <h2>Recommended Model</h2>
+        <div id="recommendation-data"></div>
+        <button class="btn btn-primary" onclick="app.downloadRecommended()">Download Recommended</button>
+      </div>
+    </section>
+
+    <!-- Settings section -->
+    <section id="section-settings" class="section" style="display:none">
+      <div class="settings-card">
+        <h2>Settings</h2>
+        <div class="setting-row">
+          <label>Context Length</label>
+          <select id="setting-context" class="select-input">
+            <option value="2048">2K</option>
+            <option value="4096">4K</option>
+            <option value="8192" selected>8K</option>
+            <option value="16384">16K</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <label>GPU Layers (-1 = auto)</label>
+          <input type="number" id="setting-gpu-layers" value="-1" class="input">
+        </div>
+        <div class="setting-row">
+          <label>Temperature</label>
+          <input type="range" id="setting-temperature" min="0" max="2" step="0.1" value="0.7">
+        </div>
+        <button class="btn btn-primary" onclick="app.saveSettings()">Save Settings</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Modal: Model Detail / Download -->
+<div id="model-modal" class="modal" style="display:none">
+  <div class="modal-backdrop" onclick="app.closeModal()"></div>
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 id="modal-title">Model Details</h2>
+      <button class="btn-close" onclick="app.closeModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <!-- Content injected -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="app.closeModal()">Close</button>
+      <button class="btn btn-primary" id="modal-download-btn" onclick="app.downloadSelected()">Download Model</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Recommendation Popup -->
+<div id="rec-modal" class="modal" style="display:none">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content rec-popup">
+    <div class="modal-header">
+      <h2>&#128214; Recommended for Your Machine</h2>
+    </div>
+    <div class="modal-body" id="rec-body">
+      <!-- Recommendation content -->
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="app.closeRecModal()">Not Now</button>
+      <button class="btn btn-primary" onclick="app.downloadRecommended()">Download & Start Chat</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<script src="/web/app.js"></script>
+</body>
+</html>
