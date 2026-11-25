@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"alocal/internal/brand"
 	"alocal/internal/catalog"
 	"alocal/internal/hardware"
 	"alocal/internal/hf"
@@ -44,13 +45,16 @@ type paletteState struct {
 	input    textinput.Model
 	repo     string
 	files    []string
+	// itemLines maps a visible item to the line it occupies inside the
+	// rendered box. It lets mouse clicks resolve to the row under the pointer.
+	itemLines map[int]int
 }
 
 func newPalette() paletteState {
 	input := textinput.New()
 	input.CharLimit = 256
 	input.Width = 48
-	return paletteState{mode: "menu", items: menuItems(), input: input}
+	return paletteState{mode: "menu", items: menuItems(), input: input, itemLines: map[int]int{}}
 }
 
 func menuItems() []string {
@@ -474,29 +478,29 @@ func (m *Model) detectHardware() (*hardware.Profile, error) {
 
 var paletteBox = lipgloss.NewStyle().
 	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("240")).
+	BorderForeground(lipgloss.Color(brand.Rule)).
 	Padding(0, 1)
 
 var (
-	paletteTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
-	paletteDim   = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	paletteTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.Lavender))
+	paletteDim   = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Muted))
 )
 
 func paletteTitleFor(mode string) string {
 	titles := map[string]string{
-		"menu":     "ALOCAL COMMANDS",
-		"switch":   "SWITCH MODEL",
-		"repo":     "DOWNLOAD GGUF",
-		"file":     "SELECT GGUF FILE",
-		"explain":  "EXPLAIN MODEL",
-		"mcp":      "MCP SERVERS",
-		"mcp-add":  "ADD MCP SERVER",
-		"settings": "SETTINGS",
+		"menu":     "Commands",
+		"switch":   "Switch model",
+		"repo":     "Download from Hugging Face",
+		"file":     "Choose a GGUF file",
+		"explain":  "Explain a model",
+		"mcp":      "MCP servers",
+		"mcp-add":  "Add an MCP server",
+		"settings": "Settings",
 	}
 	if title, ok := titles[mode]; ok {
 		return title
 	}
-	return "ALOCAL"
+	return "Alocal"
 }
 
 // paletteHelp returns mode-aware key hints shown under the palette.
@@ -515,42 +519,81 @@ func (m *Model) paletteHelp() string {
 
 func (m *Model) renderPalette() string {
 	p := &m.palette
+	p.itemLines = map[int]int{}
 	lines := []string{
-		paletteTitle.Render(paletteTitleFor(p.mode)) + "  " + paletteDim.Render("Ctrl+X / Esc to close"),
+		m.st(paletteTitle, paletteTitleFor(p.mode)) + "  " +
+			m.st(paletteDim, "Ctrl+X / Esc to close"),
 	}
 	items := p.visible()
 	switch p.mode {
 	case "repo", "explain", "settings", "mcp-add":
 		label := map[string]string{
-			"repo":     "Hugging Face repo (owner/name):",
-			"explain":  "Model id:",
-			"settings": "context gpu_layers temperature:",
-			"mcp-add":  "Name command [args...]:",
+			"repo":     "Hugging Face repository (owner/name)",
+			"explain":  "Model id",
+			"settings": "context gpu_layers temperature",
+			"mcp-add":  "name command [args...]",
 		}[p.mode]
-		lines = append(lines, paletteDim.Render(label), p.input.View())
+		lines = append(lines, m.st(paletteDim, label), p.input.View())
 	case "file":
-		lines = append(lines, paletteDim.Render("Files in "+p.repo+":"))
+		lines = append(lines, m.st(paletteDim, "Files in "+p.repo))
 		for i, item := range items {
-			lines = append(lines, renderPaletteItem(item, i == p.selected))
+			lines = append(lines, m.renderPaletteItem(item, i == p.selected))
+			p.itemLines[i] = len(lines) // one border line precedes the content
 		}
 	default:
 		for i, item := range items {
-			lines = append(lines, renderPaletteItem(item, i == p.selected))
+			lines = append(lines, m.renderPaletteItem(item, i == p.selected))
+			p.itemLines[i] = len(lines)
 		}
 	}
 	if len(items) == 0 && !p.textMode() {
-		lines = append(lines, paletteDim.Render("(no entries)"))
+		lines = append(lines, m.st(paletteDim, "No matching entries"))
 	}
 	width := m.width - 4
-	if width < 32 {
-		width = 32
+	if width < 24 {
+		width = 24
+	}
+	if m.width > 0 && width > m.width-2 {
+		width = m.width - 2
 	}
 	return paletteBox.Width(width).Render(strings.Join(lines, "\n"))
 }
 
-func renderPaletteItem(item string, selected bool) string {
+func (m *Model) renderPaletteItem(item string, selected bool) string {
 	if selected {
-		return paletteTitle.Render("▸ " + item)
+		return m.st(accentStyle, "▸ ") + m.st(titleStyle, item)
 	}
-	return paletteDim.Render("  " + item)
+	return "  " + m.st(mutedStyle, item)
+}
+
+// handlePaletteMouse makes the palette work like a list: click a row to select
+// and activate it, or scroll to move the selection.
+func (m *Model) handlePaletteMouse(msg tea.MouseMsg) tea.Cmd {
+	p := &m.palette
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp && msg.Action == tea.MouseActionPress:
+		p.move(-1)
+		return nil
+	case msg.Button == tea.MouseButtonWheelDown && msg.Action == tea.MouseActionPress:
+		p.move(1)
+		return nil
+	case msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress:
+		return nil
+	}
+	if p.textMode() {
+		return nil
+	}
+	line := msg.Y - m.paletteTop
+	for index, at := range p.itemLines {
+		if at != line {
+			continue
+		}
+		if index < 0 || index >= len(p.visible()) {
+			return nil
+		}
+		p.selected = index
+		cmd, _ := m.paletteEnter()
+		return cmd
+	}
+	return nil
 }

@@ -82,6 +82,7 @@ func (m *Model) onFetched(v fetchedMsg) {
 	before := discovery.Count(m.entries)
 	m.entries = discovery.Merge(m.entries, v.entries)
 	after := discovery.Count(m.entries)
+	m.err = nil
 	m.applyFilter()
 	m.status = fmt.Sprintf("Live Hub added %d repositories (%d total).", after-before, after)
 }
@@ -92,6 +93,7 @@ func (m *Model) onEnriched(v enrichedMsg) {
 		m.status = "Could not fetch file sizes: " + shortError(v.err)
 		return
 	}
+	m.err = nil
 	for i := range m.entries {
 		if strings.EqualFold(m.entries[i].Repo, v.repo) {
 			v.entry.Downloaded = m.entries[i].Downloaded || v.entry.Downloaded
@@ -145,6 +147,7 @@ func (m *Model) beginDownload(e discovery.Entry, file discovery.File, dest strin
 	m.cancel = cancel
 	m.cancelRequested = false
 	m.downloading = true
+	m.err = nil
 	m.progressFile = file.Name
 	m.progressDone, m.progressTotal = 0, file.SizeBytes
 	m.status = "Downloading " + file.Name + "…"
@@ -215,6 +218,7 @@ func (m *Model) onDownloadDone(v downloadDoneMsg) {
 		m.status = "Downloaded, but the local registry could not be reloaded: " + shortError(err)
 		return
 	}
+	m.err = nil
 	localEntries := discovery.LocalEntries(store)
 	m.entries = discovery.Merge(m.entries, localEntries)
 	m.rebuildCounts()
@@ -232,7 +236,7 @@ func (m *Model) onDownloadDone(v downloadDoneMsg) {
 }
 
 func (m *Model) setCategoryByID(id string) {
-	for i, cat := range discovery.Categories {
+	for i, cat := range catalogueSections {
 		if cat.ID == id {
 			m.setCategory(i)
 			return

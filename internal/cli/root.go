@@ -113,6 +113,7 @@ func NewRoot(app *App) *cobra.Command {
 		newCatalogCmd(app),
 		newChatCmd(app),
 	)
+	root.SetVersionTemplate("Alocal {{.Version}}\n")
 	return root
 }
 

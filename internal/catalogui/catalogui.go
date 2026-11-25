@@ -30,6 +30,22 @@ type Options struct {
 	FetchDynamic bool
 }
 
+// section is a sidebar destination. The synthetic "All Models" entry makes the
+// full embedded catalogue the default view; the remaining sections mirror the
+// discovery categories, including the locally downloaded models.
+type section struct {
+	ID    string
+	Label string
+}
+
+var catalogueSections = func() []section {
+	out := []section{{ID: "all", Label: "All Models"}}
+	for _, c := range discovery.Categories {
+		out = append(out, section{ID: c.ID, Label: c.Label})
+	}
+	return out
+}()
+
 // Model is the bubbletea model for the catalogue.
 type Model struct {
 	entries       []discovery.Entry
@@ -71,17 +87,28 @@ type Model struct {
 	cancel          func()
 	initialCmd      tea.Cmd
 	program         *tea.Program
+
+	// hits are the clickable regions from the most recently rendered frame.
+	hits []hitBox
 }
 
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("225"))
-	selectedStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	goodStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	warnStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	badStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.White))
+	textStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.White))
+	accentStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.Purple))
+	labelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.Lavender))
+	mutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Muted))
+	faintStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Faint))
+	goodStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Success))
+	warnStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Warning))
+	badStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Danger))
+	ruleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Rule))
+	keyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Lavender))
+	helpStyle   = faintStyle
+
+	// Keep these names for compatibility with the download workflow helpers.
+	selectedStyle = accentStyle
+	dimStyle      = mutedStyle
 )
 
 // New builds a catalogue model. Dynamic Hub discovery starts on Init.
@@ -104,16 +131,26 @@ func New(opts Options) *Model {
 		return m.entries[i].Downloads > m.entries[j].Downloads
 	})
 	m.search = textinput.New()
-	m.search.Placeholder = "Search name, publisher, task or quant..."
+	m.search.Prompt = ""
+	m.search.Placeholder = "Search models, publishers, tasks or quants"
 	m.search.CharLimit = 160
 	m.search.Width = 48
-	m.rebuildCounts()
+	if opts.Color {
+		m.search.TextStyle = textStyle
+		m.search.PlaceholderStyle = faintStyle
+		m.search.Cursor.Style = accentStyle
+	} else {
+		plain := lipgloss.NewStyle()
+		m.search.TextStyle = plain
+		m.search.PlaceholderStyle = plain
+		m.search.Cursor.Style = plain
+	}
 	m.applyFilter()
 	if opts.FetchDynamic {
 		m.initialCmd = m.fetchCmd()
-		m.status = "Fetching live Hugging Face catalog…"
+		m.status = "Fetching live Hugging Face catalogue…"
 	} else {
-		m.status = fmt.Sprintf("Embedded catalogue: %d repositories", discovery.Count(m.entries))
+		m.status = "Offline · embedded catalogue"
 	}
 	return m
 }
@@ -121,7 +158,7 @@ func New(opts Options) *Model {
 // Run starts the interactive catalogue.
 func Run(opts Options) error {
 	m := New(opts)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	m.SetProgram(p)
 	_, err := p.Run()
 	return err
@@ -138,7 +175,13 @@ func IsTerminal() bool {
 }
 
 // Init implements tea.Model.
-func (m *Model) Init() tea.Cmd { return m.initialCmd }
+func (m *Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{textinput.Blink}
+	if m.initialCmd != nil {
+		cmds = append(cmds, m.initialCmd)
+	}
+	return tea.Batch(cmds...)
+}
 
 // Update implements tea.Model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -146,6 +189,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
 		return m, nil
+	case tea.MouseMsg:
+		return m, m.handleMouse(v)
 	case fetchedMsg:
 		m.onFetched(v)
 		return m, nil
@@ -187,12 +232,7 @@ func (m *Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.downloading {
 		switch name {
 		case "esc", "ctrl+c":
-			if m.cancel != nil {
-				m.cancel()
-			}
-			m.downloading = false
-			m.cancelRequested = true
-			m.status = "Download cancelled; partial data was kept for resume."
+			m.cancelDownload()
 			return m, nil
 		}
 		return m, nil
@@ -269,12 +309,7 @@ func (m *Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if len(name) == 1 && name[0] >= '0' && name[0] <= '9' {
 		index := int(name[0] - '0')
-		if index == 0 {
-			index = len(discovery.Categories) // 0 jumps to Downloaded Models
-		} else {
-			index--
-		}
-		if index < len(discovery.Categories) {
+		if index < len(catalogueSections) {
 			m.setCategory(index)
 		}
 		return m, nil
@@ -383,9 +418,119 @@ func (m *Model) handleDetailKey(key tea.KeyMsg) tea.Cmd {
 		m.showRequirements = !m.showRequirements
 	case "e":
 		return m.enrichCmd()
-	case "enter":
+	case "enter", "backspace":
 		m.detail = false
 		m.showRequirements = false
+	}
+	return nil
+}
+
+func (m *Model) cancelDownload() {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.downloading = false
+	m.cancelRequested = true
+	m.status = "Download cancelled; partial data was kept for resume."
+}
+
+// handleMouse makes the browser, detail actions and modals pointer-driven.
+func (m *Model) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if msg.Action != tea.MouseActionPress {
+			return nil
+		}
+		return m.mouseScroll(-1)
+	case tea.MouseButtonWheelDown:
+		if msg.Action != tea.MouseActionPress {
+			return nil
+		}
+		return m.mouseScroll(1)
+	}
+	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
+		return nil
+	}
+	for _, hit := range m.hits {
+		if msg.Y != hit.y || msg.X < hit.x0 || msg.X >= hit.x1 {
+			continue
+		}
+		return m.activate(hit)
+	}
+	return nil
+}
+
+func (m *Model) mouseScroll(direction int) tea.Cmd {
+	switch {
+	case m.downloading, m.confirmDownload, m.help:
+		return nil
+	case m.quantPicker:
+		return m.handleQuantKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{scrollKey(direction)}})
+	case m.downloadMenu:
+		m.menuCursor = (m.menuCursor + direction + 4) % 4
+		return nil
+	case m.detail:
+		m.scrollDetail(direction * 3)
+		return nil
+	case m.search.Focused():
+		return nil
+	default:
+		m.moveCursor(direction * 3)
+		return nil
+	}
+}
+
+func scrollKey(direction int) rune {
+	if direction < 0 {
+		return 'k'
+	}
+	return 'j'
+}
+
+func (m *Model) activate(hit hitBox) tea.Cmd {
+	switch hit.action {
+	case "category":
+		m.setCategory(hit.index)
+	case "model":
+		if hit.index < 0 || hit.index >= len(m.filtered) {
+			return nil
+		}
+		if hit.index == m.cursor {
+			m.detail = true
+			m.detailScroll = 0
+			m.showRequirements = false
+			return nil
+		}
+		m.cursor = hit.index
+		m.quantIndex = -1
+		m.page = m.cursor / m.pageSize()
+	case "search":
+		m.search.Focus()
+	case "detail-download":
+		m.openDownloadMenu()
+	case "detail-requirements":
+		m.showRequirements = !m.showRequirements
+	case "detail-enrich":
+		return m.enrichCmd()
+	case "detail-back":
+		m.detail = false
+		m.showRequirements = false
+	case "menu":
+		m.menuCursor = hit.index
+		return m.handleMenuKey(tea.KeyMsg{Type: tea.KeyEnter})
+	case "quant":
+		m.quantIndex = hit.index
+		return m.handleQuantKey(tea.KeyMsg{Type: tea.KeyEnter})
+	case "confirm-yes":
+		m.confirmDownload = false
+		return m.beginDownload(m.pendingEntry, m.pendingFile, m.pendingDest)
+	case "confirm-no":
+		m.confirmDownload = false
+		m.status = "Download cancelled."
+	case "cancel-download":
+		m.cancelDownload()
+	case "help-close":
+		m.help = false
 	}
 	return nil
 }
@@ -393,105 +538,142 @@ func (m *Model) handleDetailKey(key tea.KeyMsg) tea.Cmd {
 // View implements tea.Model.
 func (m *Model) View() string {
 	if m.quitting {
-		return "\n  Goodbye!\n\n"
+		return "\n  Goodbye.\n\n"
 	}
 	w := m.width
 	if w <= 0 {
 		w = 110
 	}
-	var b strings.Builder
-	b.WriteString(brand.Compact(m.color, w))
-	b.WriteString("\n")
-	if m.version != "" {
-		b.WriteString(dimStyle.Render("Model catalogue · v" + m.version))
-	} else {
-		b.WriteString(dimStyle.Render("Model catalogue"))
-	}
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(fmt.Sprintf("%d repositories · %s · %s",
-		discovery.Count(m.entries), m.hardwareSummary(), m.runtimeSummary())))
-	b.WriteString("\n\n")
+	out := &block{}
+	m.renderHeader(out, w)
 
-	if m.help {
-		b.WriteString(m.renderHelp())
-		return boxStyle.Width(w - 2).Render(b.String())
-	}
-	if m.downloading {
-		b.WriteString(m.renderProgress())
-		return boxStyle.Width(w - 2).Render(b.String())
-	}
-	if m.confirmDownload {
-		b.WriteString(m.renderConfirmation())
-		return boxStyle.Width(w - 2).Render(b.String())
+	switch {
+	case m.help:
+		m.renderHelp(out, w)
+	case m.downloading:
+		m.renderProgress(out, w)
+	case m.confirmDownload:
+		m.renderConfirmation(out, w)
+	case m.detail:
+		m.renderDetail(out, w)
+	default:
+		m.renderBrowse(out, w)
 	}
 
-	bodyWidth := w - 4
-	if m.detail {
-		b.WriteString(m.renderDetail(bodyWidth))
-	} else {
-		b.WriteString(m.renderBrowse(bodyWidth))
+	if m.height > 0 {
+		for len(out.lines) < m.height-1 {
+			out.add("")
+		}
 	}
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(m.footerHelp()))
-	return boxStyle.Width(w - 2).Render(b.String())
+	out.add(m.footer(w))
+	m.hits = out.hits
+	return strings.Join(out.lines, "\n")
 }
 
-func (m *Model) renderBrowse(w int) string {
-	sidebarWidth := 28
-	compact := w < 92
+func (m *Model) renderHeader(out *block, w int) {
+	left := brand.Compact(m.color, w)
+	right := m.st(faintStyle, "Model catalogue")
+	out.add(padBetween(left, right, w))
+	out.add(m.st(faintStyle, truncate(m.summaryLine(), w)))
+	if m.err != nil {
+		out.add(m.st(badStyle, "! "+truncate(m.err.Error(), max(20, w-4))))
+	} else if m.status != "" {
+		out.add(m.st(faintStyle, "· "+truncate(m.status, max(20, w-4))))
+	} else {
+		out.add("")
+	}
+	out.add("")
+}
+
+func (m *Model) summaryLine() string {
+	repos := discovery.Count(m.entries)
+	sized := 0
+	for _, e := range m.entries {
+		if e.File.SizeBytes > 0 {
+			sized++
+		}
+	}
+	return fmt.Sprintf("%d repositories · %d with real sizes · %s · %s",
+		repos, sized, m.hardwareSummary(), m.runtimeSummary())
+}
+
+func (m *Model) renderBrowse(out *block, w int) {
+	compact := w < 96 || m.height < 20
 	if compact {
-		sidebarWidth = 0
+		m.renderList(out, w)
+		return
 	}
-	var side string
-	if !compact {
-		side = m.renderCategories()
-	}
-	listWidth := w - sidebarWidth - 2
-	if listWidth < 30 {
-		listWidth = 30
-	}
-	list := m.renderList(listWidth)
-	if side == "" {
-		return list
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, side, "  ", list)
+	side := m.sidebarBlock(24)
+	list := &block{}
+	m.listBlock(list, w-24-2)
+	out.append(joinBlocks(*side, *list, 2))
 }
 
-func (m *Model) renderCategories() string {
-	var b strings.Builder
-	for i, cat := range discovery.Categories {
-		marker := "  "
-		if i == m.categoryIdx {
-			marker = "▸ "
+func (m *Model) sidebarBlock(width int) *block {
+	b := &block{}
+	b.add(m.st(faintStyle, "LIBRARY"))
+	b.add(m.st(faintStyle, "click a section"))
+	b.add("")
+	b.add(m.st(ruleStyle, strings.Repeat("─", width)))
+	for i, cat := range catalogueSections {
+		count := m.categoryCount[cat.ID]
+		labelW := width - 6
+		if labelW < 8 {
+			labelW = 8
 		}
-		label := fmt.Sprintf("%-18s %3d", cat.Label, m.categoryCount[cat.ID])
-		line := marker + fmt.Sprintf("%d ", i+1) + label
+		label := padRight(truncate(cat.Label, labelW), labelW)
+		countText := fmt.Sprintf("%3d", count)
+		var line string
 		if i == m.categoryIdx {
-			line = selectedStyle.Render(line)
+			line = m.st(accentStyle, "▸ ") + m.st(titleStyle, label) + m.st(mutedStyle, countText)
 		} else {
-			line = dimStyle.Render(line)
+			line = "  " + m.st(mutedStyle, label) + m.st(faintStyle, countText)
 		}
-		b.WriteString(line)
-		if i < len(discovery.Categories)-1 {
-			b.WriteString("\n")
-		}
+		y := b.add(line)
+		b.hit(y, 0, width, "category", i)
 	}
-	return b.String()
+	return b
 }
 
-func (m *Model) renderList(w int) string {
-	var b strings.Builder
-	cat := discovery.Categories[m.categoryIdx]
-	b.WriteString(titleStyle.Render(cat.Label))
-	b.WriteString("  ")
-	b.WriteString(dimStyle.Render(fmt.Sprintf("%d models", len(m.filtered))))
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("Search: " + m.search.View()))
-	b.WriteString("\n\n")
-	if len(m.filtered) == 0 {
-		b.WriteString(dimStyle.Render("No models match this category and search."))
-		return b.String()
+func (m *Model) renderList(out *block, w int) {
+	list := &block{}
+	m.listBlock(list, w)
+	out.append(*list)
+}
+
+func (m *Model) listBlock(b *block, w int) {
+	cat := m.section()
+	title := m.st(titleStyle, cat.Label)
+	count := fmt.Sprintf("%d models", len(m.filtered))
+	b.add(padBetween(title, m.st(faintStyle, count), w))
+
+	m.search.Width = max(12, w-6)
+	searchLine := m.st(accentStyle, "/ ") + m.search.View()
+	y := b.add(searchLine)
+	b.hit(y, 0, w, "search", 0)
+	b.add("")
+
+	cols := columnsFor(w)
+	header := "  " + m.cell("MODEL", cols.name) + "  "
+	if cols.publisher > 0 {
+		header += m.cell("PUBLISHER", cols.publisher) + "  "
 	}
+	if cols.params > 0 {
+		header += m.cell("PARAMS", cols.params) + "  "
+	}
+	if cols.size > 0 {
+		header += m.cell("SIZE", cols.size) + "  "
+	}
+	header += m.cell("FIT", cols.fit)
+	b.add(m.st(faintStyle, header))
+
+	if len(m.filtered) == 0 {
+		b.add("")
+		b.add(m.st(mutedStyle, "  No models match this section and search."))
+		b.add(m.st(faintStyle, "  Clear the search with Esc, or switch section with ← →."))
+		return
+	}
+
 	pageSize := m.pageSize()
 	start := m.page * pageSize
 	if start >= len(m.filtered) {
@@ -502,76 +684,190 @@ func (m *Model) renderList(w int) string {
 	if end > len(m.filtered) {
 		end = len(m.filtered)
 	}
-	nameWidth := w - 50
-	if nameWidth < 20 {
-		nameWidth = 20
-	}
 	for i := start; i < end; i++ {
 		e := m.filtered[i]
+		fit := m.compatResult(e)
+		badge := m.fitBadge(fit, cols.compact)
+		name := e.DisplayName
+		if name == "" {
+			name = e.Repo
+		}
 		marker := "  "
+		nameStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brand.White))
 		if i == m.cursor {
-			marker = "▸ "
+			marker = m.st(accentStyle, "▸ ")
+			nameStyle = titleStyle
 		}
-		name := truncate(e.DisplayName, nameWidth)
-		meta := m.compactMeta(e)
-		line := marker + padRight(name, nameWidth) + "  " + dimStyle.Render(meta)
-		if i == m.cursor {
-			line = selectedStyle.Render(line)
+		line := marker + m.st(nameStyle, m.cell(name, cols.name)) + "  "
+		if cols.publisher > 0 {
+			line += m.st(mutedStyle, m.cell(e.Publisher, cols.publisher)) + "  "
 		}
-		b.WriteString(line)
-		b.WriteString("\n")
+		if cols.params > 0 {
+			line += m.st(faintStyle, m.cell(paramsLabel(e.ParamsB), cols.params)) + "  "
+		}
+		if cols.size > 0 {
+			line += m.st(mutedStyle, m.cell(sizeLabel(e), cols.size)) + "  "
+		}
+		line += badge
+		y := b.add(line)
+		b.hit(y, 0, w, "model", i)
 	}
+
 	pages := (len(m.filtered) + pageSize - 1) / pageSize
-	b.WriteString("\n")
-	b.WriteString(dimStyle.Render(fmt.Sprintf("Page %d/%d · [%d–%d] of %d", m.page+1, pages, start+1, end, len(m.filtered))))
-	return b.String()
+	if pages < 1 {
+		pages = 1
+	}
+	b.add("")
+	b.add(m.st(faintStyle, fmt.Sprintf("  %d–%d of %d  ·  page %d/%d",
+		start+1, end, len(m.filtered), m.page+1, pages)))
 }
 
-func (m *Model) renderDetail(w int) string {
+type columns struct {
+	name      int
+	publisher int
+	params    int
+	size      int
+	fit       int
+	compact   bool
+}
+
+func columnsFor(w int) columns {
+	switch {
+	case w >= 86:
+		return columns{name: w - 52, publisher: 14, params: 6, size: 9, fit: 13}
+	case w >= 64:
+		return columns{name: w - 26, publisher: 0, params: 0, size: 9, fit: 9, compact: true}
+	default:
+		return columns{name: max(10, w-13), publisher: 0, params: 0, size: 0, fit: 8, compact: true}
+	}
+}
+
+func (m *Model) cell(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return padRight(truncate(s, width), width)
+}
+
+func paramsLabel(v float64) string {
+	if v <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.0fB", v)
+}
+
+func sizeLabel(e discovery.Entry) string {
+	if e.File.SizeBytes <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.1f GB", e.SizeGB())
+}
+
+func (m *Model) fitBadge(r compat.Result, compact bool) string {
+	var text string
+	switch r.Level {
+	case compat.Recommended:
+		if compact {
+			text = "● Fits"
+		} else {
+			text = "● Recommended"
+		}
+		return m.st(goodStyle, text)
+	case compat.Warning:
+		if compact {
+			text = "◐ Tight"
+		} else {
+			text = "◐ Tight fit"
+		}
+		return m.st(warnStyle, text)
+	case compat.Incompatible:
+		if compact {
+			text = "▲ Large"
+		} else {
+			text = "▲ Too large"
+		}
+		return m.st(badStyle, text)
+	default:
+		return m.st(faintStyle, "? Unknown")
+	}
+}
+
+func (m *Model) renderDetail(out *block, w int) {
 	e := m.selected()
 	if e.Repo == "" {
 		m.detail = false
-		return dimStyle.Render("No model selected.")
+		m.renderBrowse(out, w)
+		return
 	}
-	lines := m.detailLines(e, w)
-	pageSize := m.height - 12
-	if pageSize < 8 {
-		pageSize = 8
+	out.add(m.st(faintStyle, "Model details"))
+	out.add(m.st(titleStyle, e.DisplayName))
+	out.add(m.st(mutedStyle, e.Repo))
+	out.add("")
+
+	// Action row: every action is also a mouse target. The row shares the
+	// two-column content indent used by the rest of the detail pane.
+	actionY := out.add("  ")
+	x := 2
+	addAction := func(key, label, action string) {
+		if x > 2 {
+			out.lines[actionY] += m.st(faintStyle, "   ")
+			x += 3
+		}
+		seg := m.st(keyStyle, key) + " " + m.st(mutedStyle, label)
+		out.lines[actionY] += seg
+		out.hit(actionY, x, x+lipgloss.Width(seg), action, 0)
+		x += lipgloss.Width(seg)
 	}
-	if m.detailScroll > len(lines)-pageSize {
-		m.detailScroll = len(lines) - pageSize
+	addAction("d", "Download", "detail-download")
+	addAction("r", "Requirements", "detail-requirements")
+	addAction("e", "Fetch sizes", "detail-enrich")
+	addAction("Esc", "Back", "detail-back")
+
+	menuH := 0
+	if m.downloadMenu {
+		menuH = 6
+	}
+	if m.quantPicker {
+		menuH = min(len(e.Quantizations)+3, 10)
+	}
+	avail := m.height - len(out.lines) - menuH - 2
+	if avail < 5 {
+		avail = 5
+	}
+	content := m.detailContent(e, w)
+	if m.detailScroll > len(content)-avail {
+		m.detailScroll = len(content) - avail
 	}
 	if m.detailScroll < 0 {
 		m.detailScroll = 0
 	}
-	end := m.detailScroll + pageSize
-	if end > len(lines) {
-		end = len(lines)
+	start := m.detailScroll
+	end := start + avail
+	if end > len(content) {
+		end = len(content)
 	}
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Model details"))
-	b.WriteString("  ")
-	b.WriteString(dimStyle.Render("Esc back · d download · r requirements · e fetch sizes"))
-	b.WriteString("\n\n")
-	for _, line := range lines[m.detailScroll:end] {
-		b.WriteString(line)
-		b.WriteString("\n")
+	for _, line := range content[start:end] {
+		out.add(line)
+	}
+	if len(content) > avail {
+		out.add(m.st(faintStyle, fmt.Sprintf("  %d–%d of %d · j/k or scroll", start+1, end, len(content))))
 	}
 	if m.downloadMenu {
-		b.WriteString("\n")
-		b.WriteString(m.renderDownloadMenu())
+		out.add("")
+		m.renderDownloadMenu(out)
 	}
 	if m.quantPicker {
-		b.WriteString("\n")
-		b.WriteString(m.renderQuantPicker())
+		out.add("")
+		m.renderQuantPicker(out)
 	}
-	return b.String()
 }
 
-func (m *Model) detailLines(e discovery.Entry, w int) []string {
-	labelWidth := 15
+func (m *Model) detailContent(e discovery.Entry, w int) []string {
+	labelW := 15
+	valueW := max(20, w-labelW-4)
 	field := func(label, value string) string {
-		return padRight(label, labelWidth) + value
+		return "  " + m.st(faintStyle, padRight(label, labelW)) +
+			m.st(textStyle, truncate(value, valueW))
 	}
 	params := "not published"
 	if e.ParamsB > 0 {
@@ -583,7 +879,7 @@ func (m *Model) detailLines(e discovery.Entry, w int) []string {
 	selectedFile, hasSelectedFile := m.selectedFileFor(e)
 	size := "not published"
 	if hasSelectedFile && selectedFile.SizeBytes > 0 {
-		size = fmt.Sprintf("%.2f GB (%s)", float64(selectedFile.SizeBytes)/1e9, selectedFile.Name)
+		size = fmt.Sprintf("%.2f GB · %s", float64(selectedFile.SizeBytes)/1e9, selectedFile.Name)
 	}
 	ctx := "not published"
 	if e.MaxContext > 0 {
@@ -598,21 +894,34 @@ func (m *Model) detailLines(e discovery.Entry, w int) []string {
 	}
 	compatResult := m.compatResult(e)
 	lines := []string{
-		field("Name", e.DisplayName),
-		field("Publisher", e.Publisher),
-		field("Repository", e.Repo),
+		field("Publisher", or(e.Publisher, "not published")),
 		field("Architecture", arch),
+	}
+	if e.BaseModel != "" && !strings.EqualFold(e.BaseModel, arch) {
+		lines = append(lines, field("Base model", e.BaseModel))
+	}
+	lines = append(lines,
 		field("Parameters", params),
 		field("File size", size),
 		field("Context", ctx),
 		field("License", or(e.License, "not published")),
-		field("Downloads", fmt.Sprintf("%d · %d likes", e.Downloads, e.Likes)),
+	)
+	if len(e.Languages) > 0 {
+		lines = append(lines, field("Languages", strings.Join(e.Languages, ", ")))
 	}
+	if e.CreatedAt != "" {
+		created := e.CreatedAt
+		if len(created) > 10 {
+			created = created[:10]
+		}
+		lines = append(lines, field("Created", created))
+	}
+	lines = append(lines, field("Downloads", fmt.Sprintf("%d · %d likes", e.Downloads, e.Likes)))
 	quants := strings.Join(e.Quantizations, ", ")
 	if quants == "" {
 		quants = "not published"
 	}
-	lines = append(lines, field("Quantizations", truncate(quants, max(20, w-labelWidth-4))))
+	lines = append(lines, field("Quantizations", truncate(quants, valueW)))
 	if quant := m.selectedQuantFor(e); quant != "" {
 		lines = append(lines, field("Selected quant", quant))
 	}
@@ -623,17 +932,26 @@ func (m *Model) detailLines(e discovery.Entry, w int) []string {
 	if len(features) == 0 {
 		features = []string{"not published"}
 	}
-	lines = append(lines, field("Features", truncate(strings.Join(features, ", "), max(20, w-labelWidth-4))))
-	lines = append(lines, field("Compatibility", m.badge(compatResult)))
+	lines = append(lines, field("Features", truncate(strings.Join(features, ", "), valueW)))
+	if e.URL != "" {
+		lines = append(lines, field("Repository", e.URL))
+	}
 	lines = append(lines, "")
-	lines = append(lines, "Hardware requirements:")
-	for _, reason := range compatResult.Reasons {
-		lines = append(lines, wrap(reason, max(30, w-4))...)
+	lines = append(lines, "  "+m.st(labelStyle, "Compatibility"))
+	lines = append(lines, "  "+m.badge(compatResult))
+	if m.showRequirements {
+		for _, reason := range compatResult.Reasons {
+			for _, line := range wrap(reason, max(30, w-4)) {
+				lines = append(lines, "  "+m.st(mutedStyle, line))
+			}
+		}
+	} else {
+		lines = append(lines, "  "+m.st(faintStyle, "Press r or click Requirements to see the memory calculation."))
 	}
 	return lines
 }
 
-func (m *Model) renderDownloadMenu() string {
+func (m *Model) renderDownloadMenu(out *block) {
 	e := m.selected()
 	file, _ := m.selectedFile()
 	label := "Download model"
@@ -642,132 +960,199 @@ func (m *Model) renderDownloadMenu() string {
 	}
 	switch m.compatResult(e).Level {
 	case compat.Incompatible:
-		label = "Download model anyway - incompatible"
+		label = "Download model anyway — incompatible"
 	case compat.Unknown:
-		label = "Download model anyway - compatibility unknown"
+		label = "Download model anyway — compatibility unknown"
 	}
-	items := []string{label, "Select quantization", "View hardware requirements", "Cancel"}
-	var b strings.Builder
-	b.WriteString(dimStyle.Render("Download workflow"))
-	b.WriteString("\n")
+	out.add(m.st(labelStyle, "Download"))
+	items := []string{label, "Select quantization", "Hardware requirements", "Cancel"}
 	for i, item := range items {
-		marker := "  "
+		var line string
 		if i == m.menuCursor {
-			marker = "▸ "
+			line = m.st(accentStyle, "▸ ") + m.st(titleStyle, item)
+		} else {
+			line = "  " + m.st(mutedStyle, item)
 		}
-		line := marker + item
-		if i == m.menuCursor {
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(line)
-		if i < len(items)-1 {
-			b.WriteString("\n")
-		}
+		y := out.add(line)
+		out.hit(y, 0, lipgloss.Width(line), "menu", i)
 	}
-	return b.String()
 }
 
-func (m *Model) renderQuantPicker() string {
+func (m *Model) renderQuantPicker(out *block) {
 	e := m.selected()
-	var b strings.Builder
-	b.WriteString(dimStyle.Render("Select quantization (j/k, Enter)"))
-	b.WriteString("\n")
+	out.add(m.st(labelStyle, "Select quantization"))
 	if len(e.Quantizations) == 0 {
-		b.WriteString(dimStyle.Render("No quantizations published for this repository."))
-		return b.String()
+		out.add("  " + m.st(mutedStyle, "No quantizations published for this repository."))
+		return
 	}
 	active := m.quantIndex
 	if active < 0 {
 		active = quantIndexFor(e, e.File.Quant)
 	}
 	for i, q := range e.Quantizations {
-		marker := "  "
+		var line string
 		if i == active {
-			marker = "▸ "
+			line = m.st(accentStyle, "▸ ") + m.st(titleStyle, q)
+		} else {
+			line = "  " + m.st(mutedStyle, q)
 		}
-		line := marker + q
-		if i == active {
-			line = selectedStyle.Render(line)
-		}
-		b.WriteString(line)
-		if i < len(e.Quantizations)-1 {
-			b.WriteString("\n")
-		}
+		y := out.add(line)
+		out.hit(y, 0, lipgloss.Width(line), "quant", i)
 	}
-	return b.String()
 }
 
-func (m *Model) renderProgress() string {
-	pct := ""
+func (m *Model) renderProgress(out *block, w int) {
+	out.add(m.st(titleStyle, "Downloading"))
+	out.add("")
+	out.add("  " + m.st(textStyle, m.progressFile))
+	out.add("")
+	pct := 0.0
 	if m.progressTotal > 0 {
-		pct = fmt.Sprintf(" %.1f%%", float64(m.progressDone)/float64(m.progressTotal)*100)
+		pct = float64(m.progressDone) / float64(m.progressTotal) * 100
 	}
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Downloading GGUF"))
-	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  %s%s\n", m.progressFile, pct))
+	bar := m.progressBar(pct, w)
+	out.add("  " + bar + "  " + m.st(titleStyle, fmt.Sprintf("%.0f%%", pct)))
 	if m.progressTotal > 0 {
-		b.WriteString(fmt.Sprintf("  %.2f / %.2f GB\n", float64(m.progressDone)/1e9, float64(m.progressTotal)/1e9))
+		out.add(fmt.Sprintf("  %.2f / %.2f GB", float64(m.progressDone)/1e9, float64(m.progressTotal)/1e9))
 	} else {
-		b.WriteString(fmt.Sprintf("  %.2f GB received (size not published)\n", float64(m.progressDone)/1e9))
+		out.add(fmt.Sprintf("  %.2f GB received (size not published)", float64(m.progressDone)/1e9))
 	}
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("Esc or Ctrl+C to cancel. Partial data is kept so the download can resume."))
-	return b.String()
+	out.add("")
+	cancelY := len(out.lines)
+	line := "  " + m.st(keyStyle, "Esc") + " " + m.st(mutedStyle, "Cancel")
+	out.add(line)
+	out.hit(cancelY, 0, lipgloss.Width(line), "cancel-download", 0)
+	out.add("  " + m.st(faintStyle, "Partial data is kept so the download can resume."))
 }
 
-func (m *Model) renderConfirmation() string {
+func (m *Model) progressBar(pct float64, w int) string {
+	width := 32
+	if w < 70 {
+		width = 18
+	}
+	if width > w-14 {
+		width = max(8, w-14)
+	}
+	filled := int(pct / 100 * float64(width))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return m.st(accentStyle, strings.Repeat("━", filled)) +
+		m.st(ruleStyle, strings.Repeat("━", width-filled))
+}
+
+func (m *Model) renderConfirmation(out *block, w int) {
 	e := m.selected()
 	file, _ := m.selectedFile()
 	res := m.compatResult(e)
-	var b strings.Builder
+	out.add(m.st(labelStyle, "Attention"))
+	out.add("")
 	if m.pendingLevel == compat.Unknown {
-		b.WriteString(warnStyle.Render("Unknown memory fit"))
+		out.add(m.st(warnStyle, "Unknown memory fit"))
+		out.add("")
+		out.add("  " + m.st(textStyle, fmt.Sprintf("%s (%s)", e.DisplayName, file.Name)))
+		out.add("  " + m.st(mutedStyle, "This repository has no published GGUF size, so memory fit cannot be checked."))
+		out.add("  " + m.st(mutedStyle, "Press e in the details view to fetch real sizes before downloading."))
 	} else {
-		b.WriteString(badStyle.Render("Incompatible model"))
+		out.add(m.st(badStyle, "Incompatible model"))
+		out.add("")
+		out.add("  " + m.st(textStyle, fmt.Sprintf("%s (%s)", e.DisplayName, file.Name)))
+		out.add("  " + m.st(mutedStyle, fmt.Sprintf("Needs ~%.1f GB, but only %.1f GB is usable.", res.Need.RequiredGB, res.EffectiveGB)))
 	}
-	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  %s (%s)\n", e.DisplayName, file.Name))
-	if m.pendingLevel == compat.Unknown {
-		b.WriteString("  This repository has no published GGUF size, so memory fit cannot be checked.\n")
-		b.WriteString("  Press e in the details view to fetch real sizes before downloading.\n")
-	} else {
-		b.WriteString(fmt.Sprintf("  Needs ~%.1f GB, but only %.1f GB is usable.\n", res.Need.RequiredGB, res.EffectiveGB))
-	}
-	b.WriteString("\n")
-	b.WriteString("Alocal will not download a model with unresolved compatibility silently.\n")
-	b.WriteString(helpStyle.Render("Press y to download anyway, n or Esc to cancel."))
-	return b.String()
+	out.add("")
+	out.add("  " + m.st(mutedStyle, "Alocal will not start an unresolved download silently."))
+	out.add("")
+	y := len(out.lines)
+	yes := "[" + m.st(accentStyle, " Download anyway ") + "]"
+	no := "[" + m.st(mutedStyle, " Cancel ") + "]"
+	line := "  " + yes + "   " + no
+	out.add(line)
+	yesW := lipgloss.Width(yes)
+	noW := lipgloss.Width(no)
+	out.hit(y, 2, 2+yesW, "confirm-yes", 0)
+	out.hit(y, 2+yesW+3, 2+yesW+3+noW, "confirm-no", 0)
+	out.add("")
+	out.add("  " + m.hintLine([2]string{"y", "download anyway"}, [2]string{"n", "cancel"}))
+	_ = w
 }
 
-func (m *Model) renderHelp() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("Catalogue controls"))
-	b.WriteString("\n\n")
-	for _, line := range []string{
-		"↑/↓ or j/k      move between models",
-		"←/→ or h/l      switch category",
-		"1–9, 0          jump to category (0 = downloaded)",
-		"/               search",
-		"Enter           model details",
-		"d               download workflow",
-		"r               hardware requirements",
-		"e               fetch real file sizes from Hub",
-		"[ / ]           previous / next page",
-		"Esc             back / cancel",
-		"q or Ctrl+C     quit",
-	} {
-		b.WriteString("  " + line + "\n")
+func (m *Model) renderHelp(out *block, w int) {
+	out.add(m.st(labelStyle, "Catalogue controls"))
+	out.add("")
+	rows := [][2]string{
+		{"↑↓ / j k", "move between models"},
+		{"←→ / h l", "switch section"},
+		{"0–9", "jump to section (0 = all models)"},
+		{"/", "search"},
+		{"Enter / click", "model details (click again to open)"},
+		{"d", "download workflow"},
+		{"r", "hardware requirements"},
+		{"e", "fetch real file sizes from the Hub"},
+		{"[ / ]", "previous / next page"},
+		{"Esc", "back or clear search"},
+		{"? ", "close this help"},
+		{"q / Ctrl+C", "quit"},
 	}
-	return b.String()
+	for _, row := range rows {
+		out.add("  " + m.st(keyStyle, padRight(row[0], 14)) + m.st(mutedStyle, row[1]))
+	}
+	out.add("")
+	out.add("  " + m.st(mutedStyle, "Mouse: scroll to move, click a row to select, click again to open."))
+	y := len(out.lines)
+	line := "  " + m.st(keyStyle, "?") + " " + m.st(mutedStyle, "close")
+	out.add(line)
+	out.hit(y, 0, lipgloss.Width(line), "help-close", 0)
+	_ = w
 }
 
-func (m *Model) footerHelp() string {
-	parts := []string{"↑/↓ navigate", "←/→ category", "/ search", "Enter details", "d download", "? help", "q quit"}
-	if m.status != "" {
-		return m.status + "\n" + strings.Join(parts, " · ")
+// footer shows only the shortcuts that apply to the current surface. Hints are
+// added in priority order and dropped when the terminal is too narrow.
+func (m *Model) footer(w int) string {
+	type part struct{ key, label string }
+	var parts []part
+	switch {
+	case m.help:
+		parts = []part{{"?", "close"}, {"q", "quit"}}
+	case m.downloading:
+		parts = []part{{"Esc", "cancel"}, {"click", "cancel"}}
+	case m.confirmDownload:
+		parts = []part{{"y", "download anyway"}, {"n", "cancel"}}
+	case m.quantPicker:
+		parts = []part{{"↑↓", "choose"}, {"Enter", "select"}, {"Esc", "back"}}
+	case m.downloadMenu:
+		parts = []part{{"↑↓", "choose"}, {"Enter", "select"}, {"Esc", "back"}}
+	case m.detail:
+		parts = []part{
+			{"↑↓", "scroll"}, {"d", "download"}, {"r", "requirements"},
+			{"e", "sizes"}, {"Esc", "back"}, {"click", "action"},
+		}
+	case m.search.Focused():
+		parts = []part{{"type", "to filter"}, {"Enter", "done"}, {"Esc", "clear"}}
+	default:
+		parts = []part{
+			{"↑↓", "move"}, {"/", "search"}, {"Enter", "details"},
+			{"d", "download"}, {"q", "quit"}, {"?", "help"},
+			{"←→", "section"}, {"click", "select"}, {"scroll", "move"},
+		}
 	}
-	return strings.Join(parts, " · ")
+	var rendered []string
+	used := 2
+	for _, p := range parts {
+		seg := m.st(keyStyle, p.key) + " " + m.st(faintStyle, p.label)
+		extra := lipgloss.Width(seg)
+		if len(rendered) > 0 {
+			extra += 5
+		}
+		if used+extra > w && len(rendered) > 0 {
+			continue
+		}
+		rendered = append(rendered, seg)
+		used += extra
+	}
+	return "  " + strings.Join(rendered, m.st(faintStyle, "  ·  "))
 }
 
 func (m *Model) hardwareSummary() string {
@@ -785,35 +1170,16 @@ func (m *Model) hardwareSummary() string {
 
 func (m *Model) runtimeSummary() string { return "llama.cpp" }
 
-func (m *Model) compactMeta(e discovery.Entry) string {
-	var parts []string
-	if e.Publisher != "" {
-		parts = append(parts, e.Publisher)
-	}
-	if e.ParamsB > 0 {
-		parts = append(parts, fmt.Sprintf("%.2fB", e.ParamsB))
-	}
-	if e.File.SizeBytes > 0 {
-		parts = append(parts, fmt.Sprintf("%.2f GB", e.SizeGB()))
-	} else {
-		parts = append(parts, "size n/a")
-	}
-	if e.Downloaded {
-		parts = append(parts, "downloaded")
-	}
-	return strings.Join(parts, " · ")
-}
-
 func (m *Model) badge(r compat.Result) string {
 	switch r.Level {
 	case compat.Recommended:
-		return goodStyle.Render(string(r.Level))
+		return m.st(goodStyle, "● Recommended")
 	case compat.Warning:
-		return warnStyle.Render(string(r.Level))
+		return m.st(warnStyle, "◐ Tight fit")
 	case compat.Incompatible:
-		return badStyle.Render(string(r.Level))
+		return m.st(badStyle, "▲ Too large")
 	default:
-		return dimStyle.Render(string(r.Level))
+		return m.st(faintStyle, "? Unknown")
 	}
 }
 
@@ -870,8 +1236,26 @@ func (m *Model) movePage(delta int) {
 	m.quantIndex = -1
 }
 
+func (m *Model) section() section {
+	if m.categoryIdx < 0 || m.categoryIdx >= len(catalogueSections) {
+		return catalogueSections[0]
+	}
+	return catalogueSections[m.categoryIdx]
+}
+
+func (m *Model) inSection(e discovery.Entry, id string) bool {
+	switch id {
+	case "all":
+		return true
+	case discovery.CategoryDownloaded:
+		return e.Downloaded
+	default:
+		return e.HasCategory(id)
+	}
+}
+
 func (m *Model) setCategory(index int) {
-	n := len(discovery.Categories)
+	n := len(catalogueSections)
 	m.categoryIdx = ((index % n) + n) % n
 	m.cursor = 0
 	m.page = 0
@@ -883,11 +1267,11 @@ func (m *Model) setCategory(index int) {
 }
 
 func (m *Model) applyFilter() {
-	cat := discovery.Categories[m.categoryIdx]
+	cat := m.section()
 	query := m.search.Value()
 	m.filtered = m.filtered[:0]
 	for _, e := range m.entries {
-		if !e.HasCategory(cat.ID) || !e.Matches(query) {
+		if !m.inSection(e, cat.ID) || !e.Matches(query) {
 			continue
 		}
 		m.filtered = append(m.filtered, e)
@@ -904,24 +1288,24 @@ func (m *Model) applyFilter() {
 }
 
 func (m *Model) rebuildCounts() {
-	m.categoryCount = map[string]int{}
+	m.categoryCount = map[string]int{"all": discovery.Count(m.entries)}
 	for _, e := range m.entries {
 		for _, id := range e.Categories {
 			m.categoryCount[id]++
+		}
+		if e.Downloaded && !e.HasCategory(discovery.CategoryDownloaded) {
+			m.categoryCount[discovery.CategoryDownloaded]++
 		}
 	}
 }
 
 func (m *Model) pageSize() int {
 	if m.height <= 0 {
-		return 10
+		return 12
 	}
-	n := m.height - 14
+	n := m.height - 11
 	if n < 5 {
 		return 5
-	}
-	if n > 16 {
-		return 16
 	}
 	return n
 }
@@ -967,6 +1351,98 @@ func quantIndexFor(e discovery.Entry, quant string) int {
 		}
 	}
 	return 0
+}
+
+// ---- rendering primitives -------------------------------------------------
+
+type hitBox struct {
+	y, x0, x1 int
+	action    string
+	index     int
+}
+
+type block struct {
+	lines []string
+	hits  []hitBox
+}
+
+func (b *block) add(line string) int {
+	b.lines = append(b.lines, line)
+	return len(b.lines) - 1
+}
+
+func (b *block) hit(y, x0, x1 int, action string, index int) {
+	if x1 <= x0 {
+		return
+	}
+	b.hits = append(b.hits, hitBox{y: y, x0: x0, x1: x1, action: action, index: index})
+}
+
+func (b *block) append(other block) {
+	offset := len(b.lines)
+	b.lines = append(b.lines, other.lines...)
+	for _, h := range other.hits {
+		h.y += offset
+		b.hits = append(b.hits, h)
+	}
+}
+
+func joinBlocks(left, right block, gap int) block {
+	lines := make([]string, 0, max(len(left.lines), len(right.lines)))
+	leftW := 0
+	for _, line := range left.lines {
+		if w := lipgloss.Width(line); w > leftW {
+			leftW = w
+		}
+	}
+	rightW := 0
+	for _, line := range right.lines {
+		if w := lipgloss.Width(line); w > rightW {
+			rightW = w
+		}
+	}
+	for i := 0; i < max(len(left.lines), len(right.lines)); i++ {
+		l, r := "", ""
+		if i < len(left.lines) {
+			l = left.lines[i]
+		}
+		if i < len(right.lines) {
+			r = right.lines[i]
+		}
+		lines = append(lines, padRight(l, leftW)+strings.Repeat(" ", gap)+r)
+	}
+	out := block{lines: lines}
+	out.hits = append(out.hits, left.hits...)
+	for _, h := range right.hits {
+		h.x0 += leftW + gap
+		h.x1 += leftW + gap
+		out.hits = append(out.hits, h)
+	}
+	return out
+}
+
+func (m *Model) st(style lipgloss.Style, text string) string {
+	if !m.color {
+		return text
+	}
+	return style.Render(text)
+}
+
+func (m *Model) hintLine(pairs ...[2]string) string {
+	parts := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		parts = append(parts, m.st(keyStyle, p[0])+" "+m.st(faintStyle, p[1]))
+	}
+	return strings.Join(parts, m.st(faintStyle, "  ·  "))
+}
+
+func padBetween(left, right string, width int) string {
+	lw := lipgloss.Width(left)
+	rw := lipgloss.Width(right)
+	if lw+rw+2 > width {
+		return left
+	}
+	return left + strings.Repeat(" ", width-lw-rw) + right
 }
 
 func truncate(s string, width int) string {
@@ -1025,6 +1501,13 @@ func or(s, fallback string) string {
 
 func max(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

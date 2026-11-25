@@ -23,14 +23,13 @@ import (
 	"alocal/internal/runtime"
 )
 
-var (
-	appStyle       = lipgloss.NewStyle().Padding(0, 1)
-	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 1)
-	userStyle      = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	assistantStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+// appStyle leaves the terminal surface untouched. All spacing is explicit so
+// the same layout is easy to reason about for hit-testing and resize.
+var appStyle = lipgloss.NewStyle()
+
+const (
+	minInputHeight = 1
+	maxInputHeight = 6
 )
 
 type chatMessage struct {
@@ -109,6 +108,9 @@ type Model struct {
 	program  *tea.Program
 	renderer *glamour.TermRenderer
 	palette  paletteState
+	// paletteTop is the zero-based screen line where the palette box starts.
+	// View updates it so mouse coordinates can be resolved without guessing.
+	paletteTop int
 }
 
 // New creates a chat TUI model.
@@ -118,19 +120,29 @@ func New(cfg Config) *Model {
 		settings = local.DefaultSettings()
 	}
 	ta := textarea.New()
-	ta.Placeholder = "Type a message... (Enter to send, Shift+Enter for newline)"
+	ta.Prompt = "❯ "
+	ta.Placeholder = "Ask anything"
 	ta.Focus()
 	ta.CharLimit = 0
 	ta.SetWidth(80)
-	ta.SetHeight(3)
+	ta.SetHeight(minInputHeight)
 	ta.ShowLineNumbers = false
+	ta.EndOfBufferCharacter = ' '
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter")
+	if !cfg.NoColor {
+		ta.FocusedStyle.Base = textStyle
+		ta.FocusedStyle.Text = textStyle
+		ta.FocusedStyle.Prompt = accentStyle
+		ta.FocusedStyle.Placeholder = faintStyle
+		ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.White))
+		ta.BlurredStyle = ta.FocusedStyle
+	}
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Purple))
 
-	renderer, _ := glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(80))
+	renderer := newRenderer(cfg.NoColor, 80)
 
 	m := &Model{
 		modelPath:     cfg.ModelPath,
@@ -222,6 +234,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.messages = append(m.messages, chatMessage{Role: "user", Content: content})
 			m.input.Reset()
+			m.syncInputHeight()
 			m.streaming = true
 			m.streamBuf = ""
 			m.err = nil
@@ -235,6 +248,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.handleResize()
 		return m, nil
+
+	case tea.MouseMsg:
+		if m.palette.open {
+			return m, m.handlePaletteMouse(msg)
+		}
 
 	case tokenMsg:
 		if msg.Done {
@@ -333,6 +351,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !m.streaming && !m.palette.open && m.input.Focused() {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
+		m.syncInputHeight()
 		cmds = append(cmds, cmd)
 	}
 	if m.palette.open && m.palette.textMode() {
@@ -349,59 +368,126 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (m *Model) View() string {
 	if m.quitting {
-		return "\n  Goodbye!\n\n"
+		return "\n  Goodbye.\n\n"
 	}
 	if !m.ready {
-		return "\n  Preparing Alocal interface...\n"
+		return "\n  Preparing Alocal…\n"
 	}
 	var s strings.Builder
-	s.WriteString(brand.Logo(!m.noColor, m.width))
-	s.WriteString("\n")
-	for _, line := range m.status {
-		s.WriteString(dimStyle.Render("  " + line))
-		s.WriteString("\n")
-	}
-	s.WriteString(dimStyle.Render(fmt.Sprintf("  Model     %s · llama.cpp · %d ctx", m.modelLabel, m.settings.Context)))
+	s.WriteString(m.renderHeader())
 	s.WriteString("\n\n")
 	if m.palette.open {
+		m.paletteTop = m.headerHeight() + 1
 		s.WriteString(m.renderPalette())
-		s.WriteString("\n")
-		s.WriteString(helpStyle.Render(m.paletteHelp()))
+		s.WriteString("\n\n")
+		s.WriteString("  ")
+		s.WriteString(m.paletteHelp())
 		return appStyle.Render(s.String())
 	}
 	s.WriteString(m.viewport.View())
 	s.WriteString("\n")
+	s.WriteString("  ")
 	s.WriteString(m.statusLine())
 	s.WriteString("\n")
+	if rule := m.rule(); rule != "" {
+		s.WriteString(rule)
+		s.WriteString("\n")
+	}
+	s.WriteString("  ")
 	s.WriteString(m.input.View())
 	s.WriteString("\n")
-	s.WriteString(helpStyle.Render("Enter send · Shift+Enter newline · Ctrl+X commands · Esc stop · Ctrl+C quit"))
+	s.WriteString("  ")
+	s.WriteString(m.helpBar())
 	return appStyle.Render(s.String())
 }
 
+// renderHeader stacks the mark, the truthful startup status, and the active
+// model. It is the only place the identity is repeated.
+func (m *Model) renderHeader() string {
+	var b strings.Builder
+	b.WriteString(brand.Logo(!m.noColor, m.width))
+	b.WriteString("\n")
+	for _, line := range m.status {
+		b.WriteString(m.renderStatusRow(line))
+		b.WriteString("\n")
+	}
+	b.WriteString(m.renderModelRow())
+	return b.String()
+}
+
+func (m *Model) renderStatusRow(line string) string {
+	key, sep, value := splitStatus(line)
+	if key == "" {
+		return "  " + m.st(mutedStyle, truncateStatus(line, max(8, m.width-2)))
+	}
+	avail := m.width - 2 - lipgloss.Width(key) - lipgloss.Width(sep)
+	if avail < 8 {
+		avail = 8
+	}
+	return "  " + m.st(faintStyle, key) + sep + m.st(mutedStyle, truncateStatus(value, avail))
+}
+
+func (m *Model) renderModelRow() string {
+	label := m.st(faintStyle, fmt.Sprintf("%-10s", "Model"))
+	value := m.modelLabel
+	if m.settings.Context > 0 {
+		value += fmt.Sprintf(" · %d ctx", m.settings.Context)
+	}
+	row := "  " + label + m.st(textStyle, value)
+	if m.width <= 0 || lipgloss.Width(row) <= m.width {
+		return row
+	}
+	available := m.width - 12
+	return "  " + label + m.st(textStyle, truncateStatus(value, available))
+}
+
+// statusLine reports only transient work. The steady state lives on the model
+// row, so the line stays quiet when nothing is happening.
 func (m *Model) statusLine() string {
 	if m.loading {
 		detail := m.loadingDetail
 		if detail == "" {
 			detail = "Starting local llama.cpp runtime..."
 		}
-		return statusStyle.Render(fmt.Sprintf("%s %s", m.spinner.View(), detail))
+		return m.st(accentStyle, m.spinner.View()) + " " + m.st(mutedStyle, detail)
 	}
 	if m.progressTotal > 0 && m.progressDone < m.progressTotal {
 		pct := float64(m.progressDone) / float64(m.progressTotal) * 100
-		return statusStyle.Render(fmt.Sprintf("Downloading GGUF %.1f%% (%.1f / %.1f GB)", pct,
-			float64(m.progressDone)/1e9, float64(m.progressTotal)/1e9))
+		return m.progressBar(pct) + "  " + m.st(faintStyle, fmt.Sprintf("%.0f%%", pct))
 	}
 	if m.streaming {
-		return statusStyle.Render(fmt.Sprintf("%s Generating... (Esc to stop)", m.spinner.View()))
+		return m.st(accentStyle, m.spinner.View()) + " " +
+			m.st(mutedStyle, "Generating") + "  " + m.st(faintStyle, "Esc to stop")
 	}
 	if m.err != nil {
-		return errorStyle.Render(fmt.Sprintf("✗ %s", m.err))
+		return m.st(dangerStyle, "!") + " " + m.st(dangerStyle, m.err.Error())
 	}
 	if m.lastTokens > 0 {
-		return statusStyle.Render(fmt.Sprintf("✓ %d tokens · %.1f tok/s", m.lastTokens, m.lastTokPerSec))
+		return m.st(successStyle, "✓") + " " + m.st(mutedStyle,
+			fmt.Sprintf("%d tokens · %.1f tok/s", m.lastTokens, m.lastTokPerSec))
 	}
-	return statusStyle.Render("Ready · local GGUF runtime")
+	if m.client == nil {
+		return m.st(faintStyle, "○") + " " + m.st(faintStyle, "no model loaded")
+	}
+	return m.st(successStyle, "●") + " " + m.st(faintStyle, "ready · local")
+}
+
+// progressBar is a quiet, determinate bar. The numeric percentage follows it
+// in statusLine so the state never depends on colour or shape alone.
+func (m *Model) progressBar(pct float64) string {
+	width := 24
+	if m.width > 0 && m.width < 60 {
+		width = 12
+	}
+	filled := int(pct / 100 * float64(width))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return m.st(accentStyle, strings.Repeat("━", filled)) +
+		m.st(ruleStyle, strings.Repeat("━", width-filled))
 }
 
 func (m *Model) appendSystem(text string) {
@@ -423,19 +509,24 @@ func (m *Model) cancelStream() {
 
 func (m *Model) headerHeight() int {
 	logo := brand.Logo(!m.noColor, m.width)
-	return strings.Count(logo, "\n") + 1 + len(m.status) + 2 // logo + version/hardware/runtime + model + blank
+	return strings.Count(logo, "\n") + 1 + len(m.status) + 1
 }
 
 func (m *Model) handleResize() {
 	headerH := m.headerHeight()
-	inputH := 5
-	statusH := 1
-	helpH := 1
-	vpH := m.height - headerH - inputH - statusH - helpH - 2
+	inputH := m.input.Height()
+	if inputH < minInputHeight {
+		inputH = minInputHeight
+	}
+	ruleH := 0
+	if m.width >= 26 {
+		ruleH = 1
+	}
+	vpH := m.height - headerH - inputH - ruleH - 3
 	if vpH < 3 {
 		vpH = 3
 	}
-	vpW := m.width - 2
+	vpW := m.width - 4
 	if vpW < 20 {
 		vpW = 20
 	}
@@ -449,9 +540,36 @@ func (m *Model) handleResize() {
 	}
 	m.input.SetWidth(vpW - 2)
 	if m.width > 10 {
-		m.renderer, _ = glamour.NewTermRenderer(glamour.WithStandardStyle("dark"), glamour.WithWordWrap(m.width-6))
+		m.renderer = newRenderer(m.noColor, m.width-8)
 	}
 	m.updateViewport()
+}
+
+func (m *Model) syncInputHeight() {
+	lines := strings.Count(m.input.Value(), "\n") + 1
+	if lines < minInputHeight {
+		lines = minInputHeight
+	}
+	if lines > maxInputHeight {
+		lines = maxInputHeight
+	}
+	if m.input.Height() == lines {
+		return
+	}
+	m.input.SetHeight(lines)
+	m.handleResize()
+}
+
+func newRenderer(noColor bool, wrap int) *glamour.TermRenderer {
+	style := "dark"
+	if noColor {
+		style = "notty"
+	}
+	if wrap < 20 {
+		wrap = 20
+	}
+	r, _ := glamour.NewTermRenderer(glamour.WithStandardStyle(style), glamour.WithWordWrap(wrap))
+	return r
 }
 
 func (m *Model) updateViewport() {
@@ -464,14 +582,19 @@ func (m *Model) updateViewport() {
 
 func (m *Model) renderWelcome() string {
 	if m.client == nil {
-		return "  Alocal is ready. No GGUF model is loaded yet.\n\n" +
-			"  Press " + lipgloss.NewStyle().Bold(true).Render("Ctrl+X") + " → Download GGUF from Hugging Face\n" +
-			"  or run: alocal pull bartowski/Qwen2.5-7B-Instruct-GGUF\n\n" +
-			"  Then press Ctrl+X → Switch model to start chatting.\n"
+		var b strings.Builder
+		b.WriteString("  " + m.st(titleStyle, "No model loaded") + "\n\n")
+		b.WriteString("  " + m.st(mutedStyle, "Alocal runs GGUF models locally with llama.cpp.") + "\n")
+		b.WriteString("  " + m.st(mutedStyle, "Choose one to begin.") + "\n\n")
+		b.WriteString("  " + m.hint("Ctrl+X", "download or switch models") + "\n")
+		b.WriteString("  " + m.st(faintStyle, "alocal pull bartowski/Qwen2.5-7B-Instruct-GGUF") + "\n")
+		return b.String()
 	}
-	return "  Local GGUF runtime ready.\n\n" +
-		"  Type a message and press Enter to start.\n" +
-		"  Press " + lipgloss.NewStyle().Bold(true).Render("Ctrl+X") + " for models, Hugging Face downloads, MCP and settings.\n"
+	var b strings.Builder
+	b.WriteString("  " + m.st(titleStyle, "Ready") + "\n\n")
+	b.WriteString("  " + m.st(mutedStyle, "Type a message below. Everything stays on this machine.") + "\n\n")
+	b.WriteString("  " + m.hint("Ctrl+X", "models · downloads · settings") + "\n")
+	return b.String()
 }
 
 func (m *Model) renderMessages() string {
@@ -484,9 +607,9 @@ func (m *Model) renderMessages() string {
 		sb.WriteString("\n")
 	}
 	if m.streamBuf != "" {
-		sb.WriteString(assistantStyle.Render("┃ Assistant") + "\n")
+		sb.WriteString(m.st(assistantStyle, "Alocal") + "\n")
 		sb.WriteString(m.renderMarkdown(m.streamBuf))
-		sb.WriteString(dimStyle.Render(" ▊") + "\n")
+		sb.WriteString(m.st(accentStyle, "▊") + "\n")
 	}
 	return sb.String()
 }
@@ -495,15 +618,15 @@ func (m *Model) renderOneMessage(msg chatMessage) string {
 	var sb strings.Builder
 	switch msg.Role {
 	case "user":
-		sb.WriteString(userStyle.Render("┃ You") + "\n")
+		sb.WriteString(m.st(userStyle, "You") + "\n")
 		for _, line := range strings.Split(msg.Content, "\n") {
-			sb.WriteString("  " + line + "\n")
+			sb.WriteString("  " + m.st(textStyle, line) + "\n")
 		}
 	case "assistant":
-		sb.WriteString(assistantStyle.Render("┃ Assistant") + "\n")
+		sb.WriteString(m.st(assistantStyle, "Alocal") + "\n")
 		sb.WriteString(m.renderMarkdown(msg.Content))
 	case "system":
-		sb.WriteString(dimStyle.Render("─── system ───") + "\n")
+		sb.WriteString(m.st(faintStyle, "System") + "\n")
 		sb.WriteString(m.renderMarkdown(msg.Content))
 	}
 	return sb.String()
@@ -517,13 +640,47 @@ func (m *Model) renderMarkdown(content string) string {
 	if err != nil {
 		return "  " + content + "\n"
 	}
-	return rendered
+	return strings.Trim(rendered, "\n") + "\n"
+}
+
+// helpBar groups the keys that matter in the composer, dropping lower-priority
+// hints when the terminal is narrow.
+func (m *Model) helpBar() string {
+	if m.width > 0 && m.width < 72 {
+		return m.hintLine(
+			[2]string{"Enter", "send"},
+			[2]string{"Ctrl+X", "commands"},
+			[2]string{"Esc", "stop"},
+		)
+	}
+	return m.hintLine(
+		[2]string{"Enter", "send"},
+		[2]string{"Shift+Enter", "newline"},
+		[2]string{"Ctrl+X", "commands"},
+		[2]string{"Esc", "stop"},
+	)
+}
+
+// splitStatus separates "Hardware  RTX 4090" into its label, the original
+// spacing and the value. Keeping the spacing makes plain-text status rows
+// stable while the TUI can style the label quietly.
+func splitStatus(line string) (key, sep, value string) {
+	i := strings.Index(line, "  ")
+	if i < 0 {
+		return "", "", line
+	}
+	j := i
+	for j < len(line) && line[j] == ' ' {
+		j++
+	}
+	return line[:i], line[i:j], line[j:]
 }
 
 func (m *Model) handleSlash(input string) (tea.Model, tea.Cmd) {
 	parts := strings.Fields(input)
 	cmd := strings.ToLower(parts[0])
 	m.input.Reset()
+	m.syncInputHeight()
 	switch cmd {
 	case "/help":
 		m.appendSystem("Commands: /help, /clear, /model <id>, /system <prompt>, /info, /models, /quit. Ctrl+X opens the command palette.")
@@ -640,10 +797,17 @@ func (m *Model) loadModelCmd(lm local.Model) tea.Cmd {
 
 func truncateStatus(s string, max int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > max {
-		return s[:max-1] + "…"
+	if max <= 0 {
+		return ""
 	}
-	return s
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(runes[:max-1]) + "…"
 }
 
 // Run starts the chat TUI with a local llama.cpp server.

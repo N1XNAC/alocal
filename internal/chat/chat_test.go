@@ -75,7 +75,7 @@ func TestCtrlXOpensPalette(t *testing.T) {
 	if len(m.palette.items) == 0 || m.palette.items[0] != "Switch model" {
 		t.Fatalf("unexpected palette: %+v", m.palette.items)
 	}
-	if !strings.Contains(m.View(), "ALOCAL COMMANDS") {
+	if !strings.Contains(m.View(), "Commands") {
 		t.Fatalf("palette not rendered: %s", m.View())
 	}
 }
@@ -122,22 +122,22 @@ func TestTruncateStatus(t *testing.T) {
 	}
 }
 
-func TestLogoUsesBlockGlyphs(t *testing.T) {
-	if !strings.Contains(logoLines, "▄") || !strings.Contains(logoLines, "▀") {
-		t.Fatal("Alocal wordmark must use terminal block glyphs")
+func TestLogoUsesGeometricLineCharacters(t *testing.T) {
+	if !strings.Contains(logoLines, "╱") || !strings.Contains(logoLines, "▔") {
+		t.Fatal("Alocal mark must use geometric line characters")
 	}
 	if strings.ContainsAny(logoLines, "🤖🐙🚀") {
 		t.Fatal("wordmark must not use emoji")
 	}
 }
 
-func TestLogoIsPurpleHexagonWithPixelWordmark(t *testing.T) {
+func TestLogoIsPurpleHexagonWithCleanWordmark(t *testing.T) {
 	got := renderLogo(100)
-	if !strings.Contains(got, "▄▄███▄▄") || !strings.Contains(got, "▀▀███▀▀") {
-		t.Fatalf("pixel hexagon missing from logo: %q", got)
+	if !strings.Contains(got, "╱▔▔▔▔▔╲") || !strings.Contains(got, "╲▁▁▁▁▁▁╱") {
+		t.Fatalf("geometric hexagon missing from logo: %q", got)
 	}
-	if strings.Count(got, "─") != 1 {
-		t.Fatalf("wordmark must have exactly one trailing dash: %q", got)
+	if strings.Count(got, "▏") != 1 {
+		t.Fatalf("wordmark must have exactly one cursor: %q", got)
 	}
 	if !strings.Contains(got, "\x1b[38;5;141m") || strings.Contains(got, "\x1b[48;") {
 		t.Fatalf("logo must use purple foreground with no background: %q", got)

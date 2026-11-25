@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"alocal/internal/brand"
 	"alocal/internal/scoring"
 )
 
@@ -20,13 +21,15 @@ type UI struct {
 func (a *App) ui() *UI { return &UI{Out: a.Out, Color: a.Color && !a.JSON} }
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111"))
+	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.White))
+	sectionStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.Lavender))
 	labelStyle   = lipgloss.NewStyle().Bold(true)
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	goodStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
-	warnStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	badStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+	accentStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(brand.Purple))
+	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Muted))
+	faintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Faint))
+	goodStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Success))
+	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Warning))
+	badStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color(brand.Danger))
 )
 
 func (u *UI) style(s lipgloss.Style, text string) string {

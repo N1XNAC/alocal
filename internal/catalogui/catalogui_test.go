@@ -58,6 +58,98 @@ func sendKeys(m *Model, keys ...string) tea.Cmd {
 	return last
 }
 
+func TestAllModelsIsTheDefaultSection(t *testing.T) {
+	entries := []discovery.Entry{
+		testEntry("acme/Tiny-Coder", "tiny.gguf", "Q4_K_M", 1e9, discovery.CategoryCoding, discovery.CategoryGeneralChat),
+		testEntry("acme/Tiny-Chat", "tiny.gguf", "Q4_K_M", 1e9, discovery.CategoryGeneralChat),
+	}
+	m := New(Options{Entries: entries, Color: false})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	if m.section().ID != "all" {
+		t.Fatalf("default section = %s, want all", m.section().ID)
+	}
+	if len(m.filtered) != 2 || m.categoryCount["all"] != 2 {
+		t.Fatalf("all section filtered=%d count=%d, want 2/2", len(m.filtered), m.categoryCount["all"])
+	}
+	if view := m.View(); !strings.Contains(view, "All Models") || !strings.Contains(view, "2 models") {
+		t.Fatalf("all models view missing: %s", view)
+	}
+	sendKeys(m, "1")
+	if m.section().ID != discovery.CategoryGeneralChat || len(m.filtered) != 2 {
+		t.Fatalf("section 1 = %s, filtered=%d", m.section().ID, len(m.filtered))
+	}
+	sendKeys(m, "2")
+	if m.section().ID != discovery.CategoryCoding || len(m.filtered) != 1 {
+		t.Fatalf("section 2 = %s, filtered=%d", m.section().ID, len(m.filtered))
+	}
+}
+
+func clickHit(t *testing.T, m *Model, action string, index int) {
+	t.Helper()
+	m.View()
+	for _, h := range m.hits {
+		if h.action == action && h.index == index {
+			m.Update(tea.MouseMsg{
+				X:      (h.x0 + h.x1) / 2,
+				Y:      h.y,
+				Button: tea.MouseButtonLeft,
+				Action: tea.MouseActionPress,
+			})
+			return
+		}
+	}
+	t.Fatalf("no clickable %q/%d in %d hit boxes: %+v", action, index, len(m.hits), m.hits)
+}
+
+func TestMouseSelectsRowsOpensDetailsAndSwitchesSections(t *testing.T) {
+	entries := []discovery.Entry{
+		testEntry("acme/One", "one.gguf", "Q4_K_M", 1e9, discovery.CategoryGeneralChat),
+		testEntry("acme/Two", "two.gguf", "Q4_K_M", 1e9, discovery.CategoryCoding),
+		testEntry("acme/Three", "three.gguf", "Q4_K_M", 1e9, discovery.CategoryVision),
+	}
+	m := New(Options{Entries: entries, Color: false})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	m.View()
+
+	clickHit(t, m, "model", 1)
+	if m.cursor != 1 || m.detail {
+		t.Fatalf("first click cursor=%d detail=%v, want 1/false", m.cursor, m.detail)
+	}
+	clickHit(t, m, "model", 1)
+	if !m.detail {
+		t.Fatal("second click did not open details")
+	}
+	sendKeys(m, "esc")
+	if m.detail {
+		t.Fatal("esc did not leave details")
+	}
+
+	// Clicking a sidebar section should switch the list immediately.
+	clickHit(t, m, "category", 2)
+	if m.section().ID != discovery.CategoryCoding {
+		t.Fatalf("category click selected %s, want coding", m.section().ID)
+	}
+}
+
+func TestMouseWheelMovesTheSelection(t *testing.T) {
+	entries := []discovery.Entry{
+		testEntry("acme/One", "one.gguf", "Q4_K_M", 1e9, discovery.CategoryGeneralChat),
+		testEntry("acme/Two", "two.gguf", "Q4_K_M", 1e9, discovery.CategoryGeneralChat),
+		testEntry("acme/Three", "three.gguf", "Q4_K_M", 1e9, discovery.CategoryGeneralChat),
+	}
+	m := New(Options{Entries: entries, Color: false})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 32})
+	m.View()
+	m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if m.cursor != 2 {
+		t.Fatalf("wheel down cursor = %d, want 2", m.cursor)
+	}
+	m.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress})
+	if m.cursor != 0 {
+		t.Fatalf("wheel up cursor = %d, want 0", m.cursor)
+	}
+}
+
 func TestCategoriesSearchAndPagination(t *testing.T) {
 	entries := []discovery.Entry{
 		testEntry("acme/Tiny-Coder", "tiny.gguf", "Q4_K_M", 1e9, discovery.CategoryCoding, discovery.CategoryGeneralChat),
@@ -75,9 +167,12 @@ func TestCategoriesSearchAndPagination(t *testing.T) {
 	if len(m.filtered) != 1 || m.filtered[0].Repo != "acme/Tiny-Coder" {
 		t.Fatalf("search filtered = %+v", m.filtered)
 	}
-	sendKeys(m, "esc", "right")
-	if discovery.Categories[m.categoryIdx].ID != discovery.CategoryCoding {
-		t.Fatalf("category = %s", discovery.Categories[m.categoryIdx].ID)
+	sendKeys(m, "esc", "esc", "2")
+	if m.section().ID != discovery.CategoryCoding {
+		t.Fatalf("category = %s", m.section().ID)
+	}
+	if len(m.filtered) != 1 || m.filtered[0].Repo != "acme/Tiny-Coder" {
+		t.Fatalf("coding filter = %+v", m.filtered)
 	}
 }
 
@@ -141,8 +236,8 @@ func TestDownloadStreamsVerifiesAndRegisters(t *testing.T) {
 	if !m.selected().Downloaded || !strings.Contains(m.status, "alocal chat") {
 		t.Fatalf("download not reflected in UI: %+v / %s", m.selected(), m.status)
 	}
-	if discovery.Categories[m.categoryIdx].ID != discovery.CategoryDownloaded {
-		t.Fatalf("category = %s, want downloaded", discovery.Categories[m.categoryIdx].ID)
+	if m.section().ID != discovery.CategoryDownloaded {
+		t.Fatalf("category = %s, want downloaded", m.section().ID)
 	}
 }
 
