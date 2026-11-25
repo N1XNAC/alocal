@@ -50,6 +50,9 @@ Examples:
 			if app.Color {
 				cfg.Status = app.startupStatus(cmd.Context())
 			}
+			if p, err := app.loadProfileFast(cmd.Context()); err == nil {
+				cfg.Profile = p
+			}
 			if cfg.SystemPrompt == "" {
 				cfg.SystemPrompt = settings.SystemPrompt
 			}
