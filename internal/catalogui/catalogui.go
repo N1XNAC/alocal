@@ -585,6 +585,13 @@ func (m *Model) View() string {
 		}
 	}
 	out.add(m.footer(w))
+	// Pad every line to the terminal width so stale cells from the previous
+	// frame are overwritten when the view changes (browse -> detail, etc.).
+	for i := range out.lines {
+		if n := lipgloss.Width(out.lines[i]); n < w {
+			out.lines[i] += strings.Repeat(" ", w-n)
+		}
+	}
 	m.hits = out.hits
 	return strings.Join(out.lines, "\n")
 }
