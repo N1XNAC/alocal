@@ -592,8 +592,21 @@ func (m *Model) View() string {
 			out.lines[i] += strings.Repeat(" ", w-n)
 		}
 	}
+	// Ensure the screen is fully filled and cleared below, so stale text from
+	// the previous view never mixes with the new one.
+	if m.height <= 0 {
+		m.height = 32
+	}
+	for len(out.lines) < m.height {
+		out.add(strings.Repeat(" ", w))
+	}
+	for i := range out.lines {
+		if n := lipgloss.Width(out.lines[i]); n < w {
+			out.lines[i] += strings.Repeat(" ", w-n)
+		}
+	}
 	m.hits = out.hits
-	return strings.Join(out.lines, "\n")
+	return strings.Join(out.lines, "\n") + "\x1b[J"
 }
 
 func (m *Model) renderHeader(out *block, w int) {

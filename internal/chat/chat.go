@@ -489,14 +489,23 @@ func (m *Model) View() string {
 	s.WriteString("\n")
 	s.WriteString("  ")
 	s.WriteString(m.helpBar())
-	// Pad lines to the terminal width so stale cells are overwritten.
+	// Pad lines to the terminal width and height so stale cells are overwritten.
+	if m.width <= 0 {
+		m.width = 80
+	}
+	if m.height <= 0 {
+		m.height = 24
+	}
 	lines := strings.Split(s.String(), "\n")
 	for i, l := range lines {
 		if n := lipgloss.Width(l); n < m.width {
 			lines[i] = l + strings.Repeat(" ", m.width-n)
 		}
 	}
-	return appStyle.Render(strings.Join(lines, "\n"))
+	for len(lines) < m.height {
+		lines = append(lines, strings.Repeat(" ", m.width))
+	}
+	return appStyle.Render(strings.Join(lines, "\n")) + "\x1b[J"
 }
 
 // renderHeader stacks the mark, the truthful startup status, and the active
